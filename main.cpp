@@ -40,14 +40,15 @@ void manual_start_program(byte pid);
 #include <sys/stat.h>
 #include "etherport.h"
 #include "server.h"
-#include "gpio.h"
 char ether_buffer[ETHER_BUFFER_SIZE];
 EthernetServer *m_server = 0;
 EthernetClient *m_client = 0;
 #endif
 
-// Small variations have been added to the timing values below
-// to minimize conflicting events
+// Some perturbations have been added to the timing values below
+// to avoid two events happening too clost to each other
+// This is because Arduino is not good at handling multiple
+// web requests at the same time
 #define NTP_SYNC_INTERVAL       86403L  // NYP sync interval, 24 hrs
 #define RTC_SYNC_INTERVAL       60      // RTC sync interval, 60 secs
 #define CHECK_NETWORK_INTERVAL  601     // Network checking timeout, 10 minutes
@@ -57,23 +58,15 @@ EthernetClient *m_client = 0;
 #define PING_TIMEOUT            200     // Ping test timeout: 200 ms
 
 extern char tmp_buffer[];       // scratch buffer
-BufferFiller bfill;             // buffer filler
+extern const char wtopts_filename[];
+BufferFiller bfill;                       // buffer filler
 
 // ====== Object defines ======
 OpenSprinkler os; // OpenSprinkler object
 ProgramData pd;   // ProgramdData object
 
-volatile ulong flow_count = 0;
-/** Flow sensor interrupt service routine */
-void flow_isr() {
-  if(os.options[OPTION_SENSOR_TYPE]!=SENSOR_TYPE_FLOW) return;
-  ulong curr = millis();
-  if(curr-os.flowcount_time_ms < 50) return;  // debounce threshold: 50ms
-  flow_count++;
-  os.flowcount_time_ms = curr;
-}
-
 #if defined(ARDUINO)
+
 // ====== UI defines ======
 static char ui_anim_chars[3] = {'.', 'o', 'O'};
 
@@ -189,6 +182,15 @@ void ui_state_machine() {
   }
 }
 
+volatile ulong flow_count = 0;
+// Flow sensor interrupt service routine
+void flow_isr() {
+  ulong curr = millis();
+  if(curr-os.sensor_lasttime < 50) return;  // debounce threshold: 50ms
+  flow_count++;
+  os.sensor_lasttime = curr;
+}
+
 // ======================
 // Setup Function
 // ======================
@@ -206,6 +208,7 @@ void do_setup() {
   setSyncInterval(RTC_SYNC_INTERVAL);  // RTC sync interval
   // if rtc exists, sets it as time sync source
   setSyncProvider(RTC.get);
+  delay(500);
   os.lcd_print_time(os.now_tz());  // display time to LCD
 
   // enable WDT
@@ -218,6 +221,10 @@ void do_setup() {
   /* Enable the WD interrupt (note no reset). */
   WDTCSR |= _BV(WDIE);
 
+  // set up flow sensor
+  if (os.options[OPTION_SENSOR_TYPE].value==SENSOR_TYPE_FLOW) {
+    attachInterrupt(PIN_FLOWSENSOR_INT, flow_isr, FALLING);
+  }
   if (os.start_network()) {  // initialize network
     os.status.network_fails = 0;
   } else {
@@ -225,6 +232,7 @@ void do_setup() {
   }
   os.status.req_network = 0;
   os.status.req_ntpsync = 1;
+  delay(500);
 
   os.apply_all_station_bits(); // reset station bits
 
@@ -235,7 +243,7 @@ void do_setup() {
 void(* sysReset) (void) = 0;
 
 volatile byte wdt_timeout = 0;
-/** WDT interrupt service routine */
+// WDT interrupt service routine
 ISR(WDT_vect)
 {
   wdt_timeout += 1;
@@ -247,14 +255,11 @@ ISR(WDT_vect)
 }
 
 #else
-
 void do_setup() {
-  initialiseEpoch();   // initialize time reference for millis() and micros()
   os.begin();          // OpenSprinkler init
   os.options_setup();  // Setup options
 
   pd.init();            // ProgramData init
-
   if (os.start_network()) {  // initialize network
     DEBUG_PRINTLN("network established.");
     os.status.network_fails = 0;
@@ -285,9 +290,10 @@ void do_loop()
   byte bid, sid, s, pid, qid, bitvalue;
   ProgramStruct prog;
 
-  os.status.mas = os.options[OPTION_MASTER_STATION];
-  os.status.mas2= os.options[OPTION_MASTER_STATION_2];
+  os.status.mas = os.options[OPTION_MASTER_STATION].value;
+  os.status.mas2= os.options[OPTION_MASTER_STATION_2].value;
   time_t curr_time = os.now_tz();
+
   // ====== Process Ethernet packets ======
 #if defined(ARDUINO)  // Process Ethernet packets for Arduino
   uint16_t pos=ether.packetLoop(ether.packetReceive());
@@ -353,30 +359,35 @@ void do_loop()
       }
       os.old_status.rain_delayed = os.status.rain_delayed;
     }
-
     // ====== Check rain sensor status ======
-    if (os.options[OPTION_SENSOR_TYPE] == SENSOR_TYPE_RAIN) { // if a rain sensor is connected
-      os.rainsensor_status();
-      if (os.old_status.rain_sensed != os.status.rain_sensed) {
-        if (os.status.rain_sensed) {
-          // rain sensor on, record time
-          os.sensor_lasttime = curr_time;
-        } else {
-          // rain sensor off, write log
-          if (curr_time>os.sensor_lasttime+10) {  // add a 10 second threshold
-                                                  // to avoid faulty rain sensors generating
-                                                  // too many log records
-            write_log(LOGDATA_RAINSENSE, curr_time);
-          }
-        }
-        os.old_status.rain_sensed = os.status.rain_sensed;
+    os.rainsensor_status();
+    if (os.old_status.rain_sensed != os.status.rain_sensed) {
+      if (os.status.rain_sensed) {
+        // rain sensor on, record time
+        os.sensor_lasttime = curr_time;
+      } else {
+        // rain sensor off, write log
+        write_log(LOGDATA_RAINSENSE, curr_time);
       }
+      os.old_status.rain_sensed = os.status.rain_sensed;
     }
+
     // ====== Schedule program data ======
     ulong curr_minute = curr_time / 60;
+	uint16_t curr_day = curr_time / 86400;
     boolean match_found = false;
     RuntimeQueueStruct *q;
-    // since the granularity of start time is minute
+    
+	if(curr_day != os.nvdata.last_day){
+		for (byte x=0;x<2;x++) {
+			os.nvdata.ethist[x] = os.nvdata.water_balance[x];
+			os.nvdata.ethist[x+2] = os.nvdata.et_run_today[x];
+			os.nvdata.et_run_today[x] = 0;
+		}
+		os.nvdata.last_day = curr_day;
+		os.nvdata_save();
+	}
+	// since the granularity of start time is minute
     // we only need to check once every minute
     if (curr_minute != last_minute) {
       last_minute = curr_minute;
@@ -399,12 +410,21 @@ void do_loop()
               ulong water_time = water_time_resolve(water_time_decode(prog.durations[sid]));
               // if the program is set to use weather scaling
               if (prog.use_weather) {
-                byte wl = os.options[OPTION_WATER_PERCENTAGE];
-                water_time = water_time * wl / 100;
-                if (wl < 20 && water_time < 10) // if water_percentage is less than 20% and water_time is less than 10 seconds
-                                                // do not water
-                  water_time = 0;
-              }
+				  if (prog.use_et) {
+					  if ((os.nvdata.water_balance[prog.pheight[sid]]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[prog.pheight[sid]])) >= os.options[OPTION_ET_MIN].value) {
+						  water_time = water_time * min((os.nvdata.water_balance[prog.pheight[sid]]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[prog.pheight[sid]])), (os.options[OPTION_ET_MAX].value)) / 10;
+					  } else {
+						  water_time = 0;
+					  }
+				  } else {
+					  byte wl = os.options[OPTION_WATER_PERCENTAGE].value;
+					  water_time = water_time * wl / 100;
+					  if (wl < 20 && water_time < 10) { // if water_percentage is less than 20% and water_time is less than 10 seconds
+						  // do not water
+						  water_time = 0;
+					  }
+				  }
+			  }
 
               if (water_time) {
                 // check if water time is still valid
@@ -422,14 +442,21 @@ void do_loop()
               }// if water_time
             }// if prog.durations[sid]
           }// for sid
+		  if (prog.use_et) {
+			  for (byte x=0;x<2;x++){
+				  if ((os.nvdata.water_balance[x]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[x])) > (os.options[OPTION_ET_MIN].value)) {
+					  os.nvdata.et_run_today[x] += max(min((os.nvdata.water_balance[x]-os.nvdata.predicted_rain), os.options[OPTION_ET_MAX].value),0);
+				  }
+			  }
+			  os.nvdata_save();
+			  write_log(LOGDATA_ET, curr_time);
+		  }//if use_et
         }// if check_match
       }// for pid
 
       // calculate start and end time
       if (match_found) {
         schedule_all_stations(curr_time);
-
-        // For debugging: print out queued elements
         DEBUG_PRINT("en:");
         for(q=pd.queue;q<pd.queue+pd.nqueue;q++) {
           DEBUG_PRINT("[");
@@ -469,7 +496,6 @@ void do_loop()
           // skip master station
           if (os.status.mas == sid+1) continue;
           if (os.status.mas2== sid+1) continue;
-          if (pd.station_qid[sid]==255) continue;
 
           q = pd.queue + pd.station_qid[sid];
           // check if this station is scheduled, either running or waiting to run
@@ -482,10 +508,15 @@ void do_loop()
           // if current station is not running, check if we should turn it on
           if(!((bitvalue>>s)&1)) {
             if (curr_time >= q->st && curr_time < q->st+q->dur) {
-
-              //turn_on_station(sid);
               os.set_station_bit(sid, 1);
 
+              // fix me
+              // upon turning on station, process RF
+              // if the station is a RF station
+              if(os.station_attrib_bits_read(ADDR_NVM_STNSPE+bid)&(1<<s)) {
+                // send RF on signal
+                os.send_rfstation_signal(sid, true);
+              }
             } //if curr_time > scheduled_start_time
           } // if current station is not running
         }//end_s
@@ -495,9 +526,7 @@ void do_loop()
       int qi;
       for(qi=pd.nqueue-1;qi>=0;qi--) {
         q=pd.queue+qi;
-        if(!q->dur || curr_time>=q->st+q->dur)  {
-          pd.dequeue(qi);
-        }
+        if(!q->dur || curr_time>=q->st+q->dur)  pd.dequeue(qi);
       }
 
       // process dynamic events
@@ -509,7 +538,6 @@ void do_loop()
       // check through runtime queue, calculate the last stop time of sequential stations
       pd.last_seq_stop_time = 0;
       ulong sst;
-      byte re=os.options[OPTION_REMOTE_EXT_MODE];
       q = pd.queue;
       for(;q<pd.queue+pd.nqueue;q++) {
         sid = q->sid;
@@ -519,8 +547,7 @@ void do_loop()
         // and the stop time must be larger than curr_time
         sst = q->st + q->dur;
         if (sst>curr_time) {
-          // only need to update last_seq_stop_time for sequential stations
-          if (os.station_attrib_bits_read(ADDR_NVM_STNSEQ+bid)&(1<<s) && !re) {
+          if (os.station_attrib_bits_read(ADDR_NVM_STNSEQ+bid)&(1<<s)) {   // only need to update last_seq_stop_time for sequential stations
             pd.last_seq_stop_time = (sst>pd.last_seq_stop_time ) ? sst : pd.last_seq_stop_time;
           }
         }
@@ -536,21 +563,17 @@ void do_loop()
         pd.reset_runtime();
         // reset program busy bit
         os.status.program_busy = 0;
-        // log flow sensor reading if flow sensor is used
-        if(os.options[OPTION_SENSOR_TYPE]==SENSOR_TYPE_FLOW) {
-          write_log(LOGDATA_FLOWSENSE, curr_time);
-        }
 
         // in case some options have changed while executing the program
-        os.status.mas = os.options[OPTION_MASTER_STATION]; // update master station
-        os.status.mas2= os.options[OPTION_MASTER_STATION_2]; // update master2 station
+        os.status.mas = os.options[OPTION_MASTER_STATION].value; // update master station
+        os.status.mas2= os.options[OPTION_MASTER_STATION_2].value; // update master2 station
       }
     }//if_some_program_is_running
 
     // handle master
     if (os.status.mas>0) {
-      byte mas_on_adj = os.options[OPTION_MASTER_ON_ADJ];
-      byte mas_off_adj= os.options[OPTION_MASTER_OFF_ADJ];
+      byte mas_on_adj = os.options[OPTION_MASTER_ON_ADJ].value;
+      byte mas_off_adj= os.options[OPTION_MASTER_OFF_ADJ].value;
       byte masbit = 0;
       os.station_attrib_bits_load(ADDR_NVM_MAS_OP, (byte*)tmp_buffer);  // tmp_buffer now stores masop_bits
       for(sid=0;sid<os.nstations;sid++) {
@@ -573,8 +596,8 @@ void do_loop()
     }
     // handle master2
     if (os.status.mas2>0) {
-      byte mas_on_adj_2 = os.options[OPTION_MASTER_ON_ADJ_2];
-      byte mas_off_adj_2= os.options[OPTION_MASTER_OFF_ADJ_2];
+      byte mas_on_adj_2 = os.options[OPTION_MASTER_ON_ADJ_2].value;
+      byte mas_off_adj_2= os.options[OPTION_MASTER_OFF_ADJ_2].value;
       byte masbit2 = 0;
       os.station_attrib_bits_load(ADDR_NVM_MAS_OP_2, (byte*)tmp_buffer);  // tmp_buffer now stores masop2_bits
       for(sid=0;sid<os.nstations;sid++) {
@@ -627,21 +650,14 @@ void do_loop()
     }
 #endif
 
-    // real-time flow count
-    static ulong flowcount_rt_start = 0;
-    if (os.options[OPTION_SENSOR_TYPE]==SENSOR_TYPE_FLOW) {
-      if (curr_time % FLOWCOUNT_RT_WINDOW == 0) {
-        os.flowcount_rt = (flow_count > flowcount_rt_start) ? flow_count - flowcount_rt_start: 0;
-        flowcount_rt_start = flow_count;
-      }
-    }
-
     // perform ntp sync
-    if (curr_time % NTP_SYNC_INTERVAL == 0) os.status.req_ntpsync = 1;
+    if (curr_time % NTP_SYNC_INTERVAL == 0)
+      os.status.req_ntpsync = 1;
     perform_ntp_sync();
 
     // check network connection
-    if (curr_time && (curr_time % CHECK_NETWORK_INTERVAL==0))  os.status.req_network = 1;
+    if (curr_time % CHECK_NETWORK_INTERVAL==0)
+      os.status.req_network = 1;
     check_network();
 
     // check weather
@@ -650,17 +666,13 @@ void do_loop()
   }
 
   #if !defined(ARDUINO)
-    delay(1); // For OSPI/OSBO/LINUX, sleep 1 ms to minimize CPU usage
+    usleep(1000);
   #endif
 }
 
-/** Make weather query */
 void check_weather() {
-  // do not check weather if
-  // - network check has failed, or
-  // - a program is currently running
-  // - the controller is in remote extension mode
-  if (os.status.network_fails>0 || os.status.program_busy || os.options[OPTION_REMOTE_EXT_MODE]) return;
+  // do not check weather if the Use Weather option is disabled, or if network is not available, or if a program is running
+  if (os.status.network_fails>0 || os.status.program_busy) return;
 
   ulong ntz = os.now_tz();
   if (os.checkwt_success_lasttime && (ntz > os.checkwt_success_lasttime + CHECK_WEATHER_SUCCESS_TIMEOUT)) {
@@ -673,13 +685,11 @@ void check_weather() {
   if (!os.checkwt_lasttime || (ntz > os.checkwt_lasttime + CHECK_WEATHER_TIMEOUT)) {
     os.checkwt_lasttime = ntz;
     GetWeather();
+	write_log(LOGDATA_ET, ntz);
+    write_log(LOGDATA_WATERLEVEL, ntz); // warning: water level may update a few seconds after getweather is called
   }
 }
 
-/** Turn off a station
- * This function turns off a scheduled station
- * and writes log record
- */
 void turn_off_station(byte sid, ulong curr_time) {
   os.set_station_bit(sid, 0);
 
@@ -698,9 +708,17 @@ void turn_off_station(byte sid, ulong curr_time) {
       pd.lastrun.program = q->pid;
       pd.lastrun.duration = curr_time - q->st;
       pd.lastrun.endtime = curr_time;
-
-      // log station run
       write_log(LOGDATA_STATION, curr_time);
+    }
+
+    // upon turning off station, process RF station
+    // if the station is a RF station
+    // fix me
+    byte bid = sid>>3;
+    byte s = sid&0x07;
+    if(os.station_attrib_bits_read(ADDR_NVM_STNSPE+bid)&(1<<s)) {
+      // turn off station
+      os.send_rfstation_signal(sid, false);
     }
   }
 
@@ -709,21 +727,17 @@ void turn_off_station(byte sid, ulong curr_time) {
   pd.station_qid[sid] = 0xFF;
 }
 
-/** Process dynamic events
- * such as rain delay, rain sensing
- * and turn off stations accordingly
- */
 void process_dynamic_events(ulong curr_time) {
   // check if rain is detected
   bool rain = false;
-  bool en = os.status.enabled ? true : false;
-  if (os.status.rain_delayed || (os.status.rain_sensed && os.options[OPTION_SENSOR_TYPE] == SENSOR_TYPE_RAIN)) {
+  if (os.status.rain_delayed || (os.status.rain_sensed && os.options[OPTION_SENSOR_TYPE].value == SENSOR_TYPE_RAIN)) {
     rain = true;
   }
 
-  byte sid, s, bid, qid, rbits;
+  byte sid, s, bid, rbits, sbits;
   for(bid=0;bid<os.nboards;bid++) {
     rbits = os.station_attrib_bits_read(ADDR_NVM_IGNRAIN+bid);
+    sbits = os.station_bits[bid];
     for(s=0;s<8;s++) {
       sid=bid*8+s;
 
@@ -733,35 +747,36 @@ void process_dynamic_events(ulong curr_time) {
       // If this is a normal program (not a run-once or test program)
       // and either the controller is disabled, or
       // if raining and ignore rain bit is cleared
-      // FIX ME
-      qid = pd.station_qid[sid];
-      if(qid==255) continue;
-      RuntimeQueueStruct *q = pd.queue + qid;
+      // fix me
+      /*
+      if ((pd.scheduled_program_index[sid]<99) &&
+          (!en || (rain && !(rbits&(1<<s)))) ) {
+        if (sbits&(1<<s)) { // if station is currently running
+          turn_off_station(sid, curr_time);
 
-      if ((q->pid<99) && (!en || (rain && !(rbits&(1<<s)))) ) {
-        turn_off_station(sid, curr_time);
-      }
+        } else if (pd.scheduled_program_index[sid] > 0) { // if station is currently not running but is waiting to run
+
+          // reset program data variables
+          pd.scheduled_start_time[sid] = 0;
+          pd.scheduled_stop_time[sid] = 0;
+          pd.scheduled_program_index[sid] = 0;
+        }
+      }*/
     }
   }
 }
 
-/** Scheduler
- * This function loops through the queue
- * and schedules the start time of each station
- */
 void schedule_all_stations(ulong curr_time) {
-
   ulong con_start_time = curr_time + 1;   // concurrent start time
   ulong seq_start_time = con_start_time;  // sequential start time
 
-  int16_t station_delay = water_time_decode_signed(os.options[OPTION_STATION_DELAY_TIME]);
+  int16_t station_delay = water_time_decode_signed(os.options[OPTION_STATION_DELAY_TIME].value);
   // if the sequential queue has stations running
   if (pd.last_seq_stop_time > curr_time) {
     seq_start_time = pd.last_seq_stop_time + station_delay;
   }
 
   RuntimeQueueStruct *q = pd.queue;
-  byte re = os.options[OPTION_REMOTE_EXT_MODE];
   // go through runtime queue and calculate start time of each station
   for(;q<pd.queue+pd.nqueue;q++) {
     if(q->st) continue; // if this queue element has already been scheduled, skip
@@ -770,18 +785,15 @@ void schedule_all_stations(ulong curr_time) {
     byte bid=sid>>3;
     byte s=sid&0x07;
 
-    // if this is a sequential station and the controller is not in remote extension mode
-    // use sequential scheduling. station delay time apples
-    if (os.station_attrib_bits_read(ADDR_NVM_STNSEQ+bid)&(1<<s) && !re) {
+    // check if this is a sequential station
+    if (os.station_attrib_bits_read(ADDR_NVM_STNSEQ+bid)&(1<<s)) {
       // sequential scheduling
       q->st = seq_start_time;
       seq_start_time += q->dur;
       seq_start_time += station_delay; // add station delay time
     } else {
-      // otherwise, concurrent scheduling
+      // concurrent scheduling
       q->st = con_start_time;
-      // stagger concurrent stations by 1 second
-      con_start_time++;
     }
     DEBUG_PRINT("[");
     DEBUG_PRINT(sid);
@@ -789,34 +801,17 @@ void schedule_all_stations(ulong curr_time) {
     DEBUG_PRINT(q->st);
     DEBUG_PRINT(",");
     DEBUG_PRINT(q->dur);
-    DEBUG_PRINT("]");
-    DEBUG_PRINTLN(pd.nqueue);
-    if (!os.status.program_busy) {
-      os.status.program_busy = 1;  // set program busy bit
-      // start flow count
-      if(os.options[OPTION_SENSOR_TYPE] == SENSOR_TYPE_FLOW) {  // if flow sensor is connected
-        os.flowcount_log_start = flow_count;
-        os.sensor_lasttime = curr_time;
-      }
-    }
+    DEBUG_PRINTLN("]");
+    os.status.program_busy = 1;  // set program busy bit
   }
 }
 
-/** Immediately reset all stations
- * No log records will be written
- */
 void reset_all_stations_immediate() {
   os.clear_all_station_bits();
   os.apply_all_station_bits();
   pd.reset_runtime();
 }
 
-/** Reset all stations
- * This function sets the duration of
- * every station to 0, which causes
- * all stations to turn off in the next processing cycle.
- * Stations will be logged
- */
 void reset_all_stations() {
   RuntimeQueueStruct *q = pd.queue;
   // go through runtime queue and assign water time to 0
@@ -826,11 +821,10 @@ void reset_all_stations() {
 }
 
 
-/** Manually start a program
- * If pid==0, this is a test program (1 minute per station)
- * If pid==255, this is a short test program (2 second per station)
- * If pid > 0. run program pid-1
- */
+// Manually start a program
+// If pid==0, this is a test program (1 minute per station)
+// If pid==255, this is a short test program (2 second per station)
+// If pid > 0. run program pid-1
 void manual_start_program(byte pid) {
   boolean match_found = false;
   reset_all_stations_immediate();
@@ -847,15 +841,13 @@ void manual_start_program(byte pid) {
     if(pid==255)  dur=2;
     else if(pid>0)
       dur = water_time_resolve(water_time_decode(prog.durations[sid]));
-    if(dur>0 && !(os.station_attrib_bits_read(ADDR_NVM_STNDISABLE+bid)&(1<<s))) {
-      RuntimeQueueStruct *q = pd.enqueue();
-      if (q) {
-        q->st = 0;
-        q->dur = dur;
-        q->sid = sid;
-        q->pid = 254;
-        match_found = true;
-      }
+    RuntimeQueueStruct *q = pd.enqueue();
+    if (q && dur>0 && !(os.station_attrib_bits_read(ADDR_NVM_STNDISABLE+bid)&(1<<s))) {
+      q->st = 0;
+      q->dur = dur;
+      q->sid = sid;
+      q->pid = 254;
+      match_found = true;
     }
   }
   if(match_found) {
@@ -866,15 +858,13 @@ void manual_start_program(byte pid) {
 // ================================
 // ====== LOGGING FUNCTIONS =======
 // ================================
+// Log files will be named /logs/xxxxx.txt
 #if defined(ARDUINO)
 char LOG_PREFIX[] = "/logs/";
 #else
 char LOG_PREFIX[] = "./logs/";
 #endif
 
-/** Generate log file name
- * Log files will be named /logs/xxxxx.txt
- */
 void make_logfile_name(char *name) {
 #if defined(ARDUINO)
   sd.chdir("/");
@@ -885,21 +875,17 @@ void make_logfile_name(char *name) {
   strcat_P(tmp_buffer, PSTR(".txt"));
 }
 
-/* To save RAM space, we store log type names
- * in program memory, and each name
- * must be strictly two characters with an ending 0
- * so each name is 3 characters total
- */
-static prog_char log_type_names[] PROGMEM =
-    "  \0"
-    "rs\0"
-    "rd\0"
-    "wl\0"
-    "fl\0";
+const char *log_type_names[] = {
+  "",
+  "rs",
+  "rd",
+  "wl",
+  "et"
+};
 
-/** write run record to log on SD card */
+// write run record to log on SD card
 void write_log(byte type, ulong curr_time) {
-  if (!os.options[OPTION_ENABLE_LOGGING]) return;
+  if (!os.options[OPTION_ENABLE_LOGGING].value) return;
 
   // file name will be logs/xxxxx.tx where xxxxx is the day in epoch time
   ultoa(curr_time / 86400, tmp_buffer, 10);
@@ -923,15 +909,15 @@ void write_log(byte type, ulong curr_time) {
   }
 #else // prepare log folder for RPI/BBB
   struct stat st;
-  if(stat(get_filename_fullpath(LOG_PREFIX), &st)) {
-    if(mkdir(get_filename_fullpath(LOG_PREFIX), S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
+  if(stat(LOG_PREFIX, &st)) {
+    if(mkdir(LOG_PREFIX, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
       return;
     }
   }
   FILE *file;
-  file = fopen(get_filename_fullpath(tmp_buffer), "rb+");
+  file = fopen(tmp_buffer, "rb+");
   if(!file) {
-    file = fopen(get_filename_fullpath(tmp_buffer), "wb");
+    file = fopen(tmp_buffer, "wb");
     if (!file)  return;
   }
   fseek(file, 0, SEEK_END);
@@ -944,33 +930,32 @@ void write_log(byte type, ulong curr_time) {
     strcat_P(tmp_buffer, PSTR(","));
     itoa(pd.lastrun.station, tmp_buffer+strlen(tmp_buffer), 10);
     strcat_P(tmp_buffer, PSTR(","));
-    // duration is unsigned integer
-    ultoa((ulong)pd.lastrun.duration, tmp_buffer+strlen(tmp_buffer), 10);
+    itoa(pd.lastrun.duration, tmp_buffer+strlen(tmp_buffer), 10);
   } else {
-    ulong lvalue;
-    if(type==LOGDATA_FLOWSENSE) {
-      lvalue = (flow_count>os.flowcount_log_start)?(flow_count-os.flowcount_log_start):0;
-    } else {
-      lvalue = 0;
-    }
-    ultoa(lvalue, tmp_buffer+strlen(tmp_buffer), 10);
-    strcat_P(tmp_buffer, PSTR(",\""));
-    strcat_P(tmp_buffer, log_type_names+type*3);
+    strcat_P(tmp_buffer, PSTR("0,\""));
+    strcat(tmp_buffer, log_type_names[type]);
     strcat_P(tmp_buffer, PSTR("\","));
-
     switch(type) {
       case LOGDATA_RAINSENSE:
-      case LOGDATA_FLOWSENSE:
-        lvalue = (curr_time>os.sensor_lasttime)?(curr_time-os.sensor_lasttime):0;
+        ultoa((curr_time - os.sensor_lasttime), tmp_buffer+strlen(tmp_buffer), 10);
         break;
       case LOGDATA_RAINDELAY:
-        lvalue = (curr_time>os.raindelay_start_time)?(curr_time-os.raindelay_start_time):0;
+        ultoa((curr_time - os.raindelay_start_time), tmp_buffer+strlen(tmp_buffer), 10);
         break;
       case LOGDATA_WATERLEVEL:
-        lvalue = os.options[OPTION_WATER_PERCENTAGE];
+        itoa(os.options[OPTION_WATER_PERCENTAGE].value, tmp_buffer+strlen(tmp_buffer), 10);
         break;
+	  case LOGDATA_ET:
+	    itoa(os.nvdata.water_balance[0], tmp_buffer+strlen(tmp_buffer), 10);
+		strcat_P(tmp_buffer, PSTR(","));
+		itoa(os.nvdata.water_balance[1], tmp_buffer+strlen(tmp_buffer), 10);
+		strcat_P(tmp_buffer, PSTR(","));
+		itoa(os.nvdata.et_run_today[0], tmp_buffer+strlen(tmp_buffer), 10);
+		strcat_P(tmp_buffer, PSTR(","));
+		itoa(os.nvdata.et_run_today[1], tmp_buffer+strlen(tmp_buffer), 10);
+		break;
+		
     }
-    ultoa(lvalue, tmp_buffer+strlen(tmp_buffer), 10);
   }
   strcat_P(tmp_buffer, PSTR(","));
   ultoa(curr_time, tmp_buffer+strlen(tmp_buffer), 10);
@@ -986,11 +971,10 @@ void write_log(byte type, ulong curr_time) {
 }
 
 
-/** Delete log file
- * If name is 'all', delete all logs
- */
+// delete log file
+// if name is 'all', delete all logs
 void delete_log(char *name) {
-  if (!os.options[OPTION_ENABLE_LOGGING]) return;
+  if (!os.options[OPTION_ENABLE_LOGGING].value) return;
 #if defined(ARDUINO)
   if (!os.status.has_sd) return;
 
@@ -1011,20 +995,15 @@ void delete_log(char *name) {
 #else // delete_log implementation for RPI/BBB
   if (strncmp(name, "all", 3) == 0) {
     // delete the log folder
-    rmdir(get_filename_fullpath(LOG_PREFIX));
+    rmdir(LOG_PREFIX);
     return;
   } else {
     make_logfile_name(name);
-    remove(get_filename_fullpath(tmp_buffer));
+    remove(tmp_buffer);
   }
 #endif
 }
 
-/** Perform network check
- * This function pings the router
- * to check if it's still online.
- * If not, it re-initializes Ethernet controller.
- */
 void check_network() {
 #if defined(ARDUINO)
   // do not perform network checking if the controller has just started, or if a program is running
@@ -1074,17 +1053,12 @@ void check_network() {
 #endif
 }
 
-/** Perform NTP sync */
 void perform_ntp_sync() {
 #if defined(ARDUINO)
   // do not perform sync if this option is disabled, or if network is not available, or if a program is running
-  if (!os.options[OPTION_USE_NTP] || os.status.network_fails>0 || os.status.program_busy) return;
+  if (!os.options[OPTION_USE_NTP].value || os.status.network_fails>0 || os.status.program_busy) return;
 
   if (os.status.req_ntpsync) {
-    // check if rtc is uninitialized
-    // 978307200 is Jan 1, 2001, 00:00:00
-    boolean rtc_zero = (now()<=978307200);
-    
     os.status.req_ntpsync = 0;
     if (!ui_state) {
       os.lcd_print_line_clear_pgm(PSTR("NTP Syncing..."),1);
@@ -1093,11 +1067,6 @@ void perform_ntp_sync() {
     if (t>0) {
       setTime(t);
       RTC.set(t);
-      // if rtc was uninitialized and now it is, restart
-      if(rtc_zero && now()>978307200) {
-        os.reboot_dev();
-      }
-      
     }
   }
 #else
