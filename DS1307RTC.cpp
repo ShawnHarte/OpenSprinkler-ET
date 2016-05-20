@@ -90,15 +90,13 @@ void DS1307RTC::read( tmElements_t &tm)
   tm.Hour =   bcd2dec(Wire.read() & 0x3f);  // mask assumes 24hr clock
   tm.Wday = bcd2dec(Wire.read() & 0x07);
   tm.Day = bcd2dec(Wire.read() );
-  tm.Month = bcd2dec(Wire.read() );
+  tm.Month = bcd2dec(Wire.read() & 0x1f);   // fix bug for MCP7940
   tm.Year = y2kYearToTm((bcd2dec(Wire.read())));
 
 }
 
 void DS1307RTC::write(tmElements_t &tm)
 {
-  static uint8_t initialized = 0;
-  
   if (ctrl_id == DS1307_CTRL_ID) {
     Wire.beginTransmission(ctrl_id);  
     Wire.write((uint8_t)0x00); // reset register pointer  

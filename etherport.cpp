@@ -3,7 +3,7 @@
  *
  * Linux Ethernet functions
  * This file is based on Richard Zimmerman's sprinklers_pi program
- * Copyright (c) 2013 Richard Zimmerman 
+ * Copyright (c) 2013 Richard Zimmerman
  *
  * This file is part of the OpenSprinkler library
  *
@@ -19,7 +19,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see
- * <http://www.gnu.org/licenses/>. 
+ * <http://www.gnu.org/licenses/>.
  */
 
 #if defined(ARDUINO)
@@ -135,8 +135,8 @@ int EthernetClient::connect(uint8_t ip[4], uint16_t port)
 	m_sock = socket(AF_INET, SOCK_STREAM, 0);
 	if (::connect(m_sock, (struct sockaddr *) &sin, sizeof(sin)) < 0)
 	{
-		DEBUG_PRINTLN("error connecting to weather server");
-		return false;
+    DEBUG_PRINTLN("error connecting to server");
+    return 0;
 	}
 	m_connected = true;
 	return 1;
@@ -177,7 +177,7 @@ int EthernetClient::read(uint8_t *buf, size_t size)
 	FD_ZERO(&sock_set);
 	FD_SET(m_sock, &sock_set);
 	struct timeval timeout;
-	timeout.tv_sec = 1;
+	timeout.tv_sec = 3;
 	timeout.tv_usec = 0;
 
 	select(m_sock + 1, &sock_set, NULL, NULL, &timeout);
@@ -194,7 +194,7 @@ int EthernetClient::read(uint8_t *buf, size_t size)
 
 size_t EthernetClient::write(const uint8_t *buf, size_t size)
 {
-	return ::write(m_sock, buf, size);
+	return ::send(m_sock, buf, size, MSG_NOSIGNAL);
 }
 
 #endif

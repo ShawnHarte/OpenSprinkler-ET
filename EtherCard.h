@@ -18,7 +18,9 @@
 //   SI  - Pin 11
 //   CS  - Pin  8
 //
+#ifndef __PROG_TYPES_COMPAT__
 #define __PROG_TYPES_COMPAT__
+#endif
 
 #ifndef EtherCard_h
 #define EtherCard_h
@@ -252,7 +254,7 @@ public:
     *     @param  dlen Size of the HTTP (TCP) payload
     *     @param  flags TCP flags
     */
-    static void httpServerReply_with_flags (uint16_t dlen, uint8_t flags, uint8_t dup=0);
+    static void httpServerReply_with_flags (uint16_t dlen, uint8_t flags);
 
     /**   @brief  Acknowledge TCP message
     *     @todo   Is this / should this be private?
