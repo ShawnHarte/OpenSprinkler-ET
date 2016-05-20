@@ -25,11 +25,11 @@
 #define _DEFINES_H
 
 /** Firmware version, hardware version, and maximal values */
-#define OS_FW_VERSION  216  // Firmware version: 216 means 2.1.6
+#define OS_FW_VERSION  217  // Firmware version: 216 means 2.1.6
                             // if this number is different from the one stored in non-volatile memory
                             // a device reset will be automatically triggered
 
-#define OS_FW_MINOR      2  // Firmware minor version
+#define OS_FW_MINOR      0  // Firmware minor version
 
 /** Hardware version base numbers */
 #define OS_HW_VERSION_BASE   0x00
@@ -45,15 +45,12 @@
 /** File names */
 #define WEATHER_OPTS_FILENAME "wtopts.txt"    // weather options file
 #define STATION_ATTR_FILENAME "stns.dat"      // station attributes data file
-#define STATION_SPECIAL_DATA_SIZE  23
-
-#define FLOWCOUNT_RT_WINDOW   30    // flow count window (for computing real-time flow rate), 30 seconds
+#define MAX_STATION_SPECIAL_DATA  16
 
 /** Station type macro defines */
 #define STN_TYPE_STANDARD    0x00
 #define STN_TYPE_RF          0x01
 #define STN_TYPE_REMOTE      0x02
-#define STN_TYPE_GPIO        0x03	// Support for raw connection of station to GPIO pin
 #define STN_TYPE_OTHER       0xFF
 
 /** Sensor type macro defines */
@@ -68,17 +65,17 @@
 /** 2KB NVM (ATmega644) data structure:
   * |         |     |  ---STRING PARAMETERS---      |           |   ----STATION ATTRIBUTES-----      |          |
   * | PROGRAM | CON | PWD | LOC | JURL | WURL | KEY | STN_NAMES | MAS | IGR | MAS2 | DIS | SEQ | SPE | OPTIONS  |
-  * |  (996)  |(12) |(36) |(48) | (40) | (40) |(24) |   (768)   | (6) | (6) |  (6) | (6) | (6) | (6) |  (48)    |
+  * |  (968)  |(48) |(32) |(48) | (40) | (40) |(32) |   (768)   | (6) | (6) |  (6) | (6) | (6) | (6) |  (46)    |
   * |         |     |     |     |      |      |     |           |     |     |      |     |     |     |          |
-  * 0        996  1008   1044  1092  1132   1172   1196        1964  1970  1976   1982  1988  1994  2000      2048
+  * 0        981  1006   1038  1086  1126   1166   1198        1966  1972  1978   1984  1990  1996  2002      2048
   */
 
 /** 4KB NVM (ATmega1284) data structure:
   * |         |     |  ---STRING PARAMETERS---      |           |   ----STATION ATTRIBUTES-----      |          |
   * | PROGRAM | CON | PWD | LOC | JURL | WURL | KEY | STN_NAMES | MAS | IGR | MAS2 | DIS | SEQ | SPE | OPTIONS  |
-  * |  (2438) |(12) |(36) |(48) | (48) | (48) |(24) |   (1344)  | (7) | (7) |  (7) | (7) | (7) | (7) |   (56)   |
+  * |  (2438) |(12) |(32) |(48) | (48) | (48) |(32) |   (1344)  | (7) | (7) |  (7) | (7) | (7) | (7) |   (52)   |
   * |         |     |     |     |      |      |     |           |     |     |      |     |     |     |          |
-  * 0       2438  2450   2486  2534  2582   2630   2654        3998  4005  4012   4019  4026  4033  4040      4096
+  * 0       2438  2450   2482  2530  2578   2626   2658        4002  4009  4016   4023  4030  4037  4044      4096
   */
 
   #if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__) // for 4KB NVM
@@ -89,13 +86,13 @@
     #define NVM_SIZE            4096  // For AVR, nvm data is stored in EEPROM, ATmega1284 has 4K EEPROM
     #define STATION_NAME_SIZE   24    // maximum number of characters in each station name
 
-    #define MAX_PROGRAMDATA     2438  // program data
-    #define MAX_NVCONDATA       12    // non-volatile controller data
-    #define MAX_USER_PASSWORD   36    // user password
+    #define MAX_PROGRAMDATA     2400  // program data
+    #define MAX_NVCONDATA       48    // non-volatile controller data
+    #define MAX_USER_PASSWORD   32    // user password
     #define MAX_LOCATION        48    // location string
     #define MAX_JAVASCRIPTURL   48    // javascript url
     #define MAX_WEATHERURL      48    // weather script url
-    #define MAX_WEATHER_KEY     24    // weather api key
+    #define MAX_WEATHER_KEY     32    // weather api key
 
   #else
 
@@ -105,20 +102,20 @@
     #define NVM_SIZE            2048  // For AVR, nvm data is stored in EEPROM, ATmega644 has 2K EEPROM
     #define STATION_NAME_SIZE   16    // maximum number of characters in each station name
 
-    #define MAX_PROGRAMDATA     996   // program data
-    #define MAX_NVCONDATA       12     // non-volatile controller data
-    #define MAX_USER_PASSWORD   36    // user password
+    #define MAX_PROGRAMDATA     958   // program data
+    #define MAX_NVCONDATA       48     // non-volatile controller data
+    #define MAX_USER_PASSWORD   32    // user password
     #define MAX_LOCATION        48    // location string
     #define MAX_JAVASCRIPTURL   40    // javascript url
     #define MAX_WEATHERURL      40    // weather script url
-    #define MAX_WEATHER_KEY     24    // weather api key,
+    #define MAX_WEATHER_KEY     32    // weather api key,
 
   #endif
 
 #else // NVM defines for RPI/BBB/LINUX
 
-  // These are kept the same as AVR for compatibility reasons
-  // But they can be increased if needed
+  // These are kept the same as AVR for compatibility
+  // But these can be increased if needed
   #define NVM_FILENAME        "nvm.dat" // for RPI/BBB, nvm data is stored in a file
 
   #define MAX_EXT_BOARDS    6  // maximum number of exp. boards (each expands 8 stations)
@@ -127,13 +124,13 @@
   #define NVM_SIZE            4096
   #define STATION_NAME_SIZE   24    // maximum number of characters in each station name
 
-  #define MAX_PROGRAMDATA     2438  // program data
-  #define MAX_NVCONDATA       12     // non-volatile controller data
-  #define MAX_USER_PASSWORD   36    // user password
+  #define MAX_PROGRAMDATA     2400  // program data
+  #define MAX_NVCONDATA       48     // non-volatile controller data
+  #define MAX_USER_PASSWORD   32    // user password
   #define MAX_LOCATION        48    // location string
   #define MAX_JAVASCRIPTURL   48    // javascript url
   #define MAX_WEATHERURL      48    // weather script url
-  #define MAX_WEATHER_KEY     24    // weather api key
+  #define MAX_WEATHER_KEY     32    // weather api key
 
 #endif  // end of NVM defines
 
@@ -159,7 +156,7 @@
 #define DEFAULT_LOCATION          "Boston,MA"
 #define DEFAULT_WEATHER_KEY       ""
 #define DEFAULT_JAVASCRIPT_URL    "https://ui.opensprinkler.com/js"
-#define DEFAULT_WEATHER_URL       "weather.opensprinkler.com"
+#define DEFAULT_WEATHER_URL       "weather.veuphoria.com"
 
 /** Macro define of each option
   * Refer to OpenSprinkler.cpp for details on each option
@@ -208,7 +205,8 @@ typedef enum {
   OPTION_FW_MINOR,
   OPTION_PULSE_RATE_0,
   OPTION_PULSE_RATE_1,
-  OPTION_REMOTE_EXT_MODE,
+  OPTION_ET_MIN,
+  OPTION_ET_MAX,
   OPTION_RESET,
   NUM_OPTIONS	// total number of options
 } OS_OPTION_t;
@@ -218,7 +216,7 @@ typedef enum {
 #define LOGDATA_RAINSENSE  0x01
 #define LOGDATA_RAINDELAY  0x02
 #define LOGDATA_WATERLEVEL 0x03
-#define LOGDATA_FLOWSENSE  0x04
+#define LOGDATA_ET         0x04
 
 #undef OS_HW_VERSION
 
@@ -276,7 +274,7 @@ typedef enum {
   #if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
     #define ETHER_BUFFER_SIZE   1500 // ATmega1284 has 16K RAM, so use a bigger buffer
   #else
-    #define ETHER_BUFFER_SIZE   960  // ATmega644 has 4K RAM, so use a smaller buffer
+    #define ETHER_BUFFER_SIZE   700  // ATmega644 has 4K RAM, so use a smaller buffer
   #endif
 
   #define 	wdt_reset()   __asm__ __volatile__ ("wdr")  // watchdog timer reset
@@ -296,7 +294,7 @@ typedef enum {
 
   #endif
   typedef unsigned char   uint8_t;
-  typedef unsigned int    uint16_t;
+  typedef unsigned int uint16_t;
   typedef int int16_t;
 
 #else // Hardware defines for RPI/BBB
@@ -317,8 +315,6 @@ typedef enum {
   #define PIN_BUTTON_2      24    // button 2
   #define PIN_BUTTON_3      25    // button 3
 
-  #define PIN_FREE_LIST		{5,6,7,8,9,10,11,12,13,16,18,19,20,21,23,24,25,26}
-  
   /** BBB pin defines */
   #elif defined(OSBO)
 
@@ -367,6 +363,7 @@ typedef enum {
   inline void itoa(int v,char *s,int b)   {sprintf(s,"%d",v);}
   inline void ultoa(unsigned long v,char *s,int b) {sprintf(s,"%lu",v);}
   #define now()       time(0)
+  #define delay(x)    {}
 
   /** Re-define avr-specific (e.g. PGM) types to use standard types */
   #define pgm_read_byte(x) *(x)
@@ -384,7 +381,7 @@ typedef enum {
 
 #endif  // end of Hardawre defines
 
-#define TMP_BUFFER_SIZE     128  // scratch buffer size
+#define TMP_BUFFER_SIZE     120  // scratch buffer size
 
 /** Other defines */
 // button values
