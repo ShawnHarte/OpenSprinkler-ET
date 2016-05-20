@@ -40,19 +40,18 @@ extern const char wtopts_filename[];
 extern OpenSprinkler os; // OpenSprinkler object
 extern char tmp_buffer[];
 byte findKeyVal (const char *str,char *strbuf, uint8_t maxlen,const char *key,bool key_in_pgm=false,uint8_t *keyfound=NULL);
-void write_log(byte type, ulong curr_time);
 
 // The weather function calls getweather.py on remote server to retrieve weather data
 // the default script is WEATHER_SCRIPT_HOST/weather?.py
-//static char website[] PROGMEM = DEFAULT_WEATHER_URL ;
+static char website[] PROGMEM = DEFAULT_WEATHER_URL ;
 
 static void getweather_callback(byte status, uint16_t off, uint16_t len) {
 #if defined(ARDUINO)
   char *p = (char*)Ethernet::buffer + off;
 #else
   char *p = ether_buffer;
-#endif
   DEBUG_PRINTLN(p);
+#endif
   /* scan the buffer until the first & symbol */
   while(*p && *p!='&') {
     p++;
@@ -72,31 +71,23 @@ static void getweather_callback(byte status, uint16_t off, uint16_t len) {
       os.nvdata.sunset_time = v;
     }
   }
-
-  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("eip"), true)) {
-    os.nvdata.external_ip = atol(tmp_buffer);
-  }
-
-  os.nvdata_save(); // save non-volatile memory
-
-  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("scale"), true)) {
+  
+  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("et0"), true)) {
     v = atoi(tmp_buffer);
-    if (v>=0 && v<=250 && v != os.options[OPTION_WATER_PERCENTAGE]) {
-      // only save if the value has changed
-      os.options[OPTION_WATER_PERCENTAGE] = v;
-      os.options_save();
+    if (v != os.nvdata.water_balance[0]) {
+      os.nvdata.water_balance[0] = v;
     }
   }
   
-  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("tz"), true)) {
+  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("et1"), true)) {
     v = atoi(tmp_buffer);
-    if (v>=0 && v<= 108) {
-      if (v != os.options[OPTION_TIMEZONE]) {
-        // if timezone changed, save change and force ntp sync
-        os.options[OPTION_TIMEZONE] = v;
-        os.options_save();
-      }
+    if (v != os.nvdata.water_balance[1]) {
+      os.nvdata.water_balance[1] =  v;
     }
+  }
+
+  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("eip"), true)) {
+    os.nvdata.external_ip = atol(tmp_buffer);
   }
   
   if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("rd"), true)) {
@@ -108,9 +99,39 @@ static void getweather_callback(byte status, uint16_t off, uint16_t len) {
       os.raindelay_stop();
     }
   }
+  
+  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("rt"), true)) {
+    v = atoi(tmp_buffer);
+    if (v>=0 && v<=255 && v != os.nvdata.predicted_rain) {
+      os.nvdata.predicted_rain = v;
+    }
+  }
+
+  os.nvdata_save(); // save non-volatile memory
+
+  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("scale"), true)) {
+    v = atoi(tmp_buffer);
+    if (v>=0 && v<=250 && v != os.options[OPTION_WATER_PERCENTAGE].value) {
+      // only save if the value has changed
+      os.options[OPTION_WATER_PERCENTAGE].value = v;
+      os.options_save();
+    }
+  }
+  
+  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("tz"), true)) {
+    v = atoi(tmp_buffer);
+    if (v>=0 && v<= 96) {
+      if (v != os.options[OPTION_TIMEZONE].value) {
+        // if timezone changed, save change and force ntp sync
+        os.options[OPTION_TIMEZONE].value = v;
+        os.options_save();
+      }
+    }
+  }
+  
+  
 
   os.checkwt_success_lasttime = os.now_tz();
-  write_log(LOGDATA_WATERLEVEL, os.checkwt_success_lasttime);
 }
 
 #if defined(ARDUINO)  // for AVR
@@ -120,18 +141,24 @@ void GetWeather() {
   ether.dnsLookup(tmp_buffer, true);
 
   //bfill=ether.tcpOffset();
-  char tmp[60];
-  read_from_file(wtopts_filename, tmp, 60);
+  char tmp[40];
+  if (os.options[OPTION_USE_WEATHER].value == 3) {
+	  sprintf(tmp, "[%i,%i,%i,%i]",os.nvdata.ethist[0],os.nvdata.ethist[1],os.nvdata.ethist[2],os.nvdata.ethist[3]);
+  } else {
+	  read_from_file(wtopts_filename, tmp, 40);
+  }
+  
   BufferFiller bf = (uint8_t*)tmp_buffer;
   bf.emit_p(PSTR("$D.py?loc=$E&key=$E&fwv=$D&wto=$S"),
-                (int) os.options[OPTION_USE_WEATHER],
+                (int) os.options[OPTION_USE_WEATHER].value,
                 ADDR_NVM_LOCATION,
                 ADDR_NVM_WEATHER_KEY,
-                (int)os.options[OPTION_FW_VERSION],
-                tmp);
+                (int) os.options[OPTION_FW_VERSION].value,
+				tmp); //,
+				//server_json_log(PSTR("&hist=1&type=et")));
   // copy string to tmp_buffer, replacing all spaces with _
   char *src=tmp_buffer+strlen(tmp_buffer);
-  char *dst=tmp_buffer+TMP_BUFFER_SIZE-12;
+  char *dst=tmp_buffer+TMP_BUFFER_SIZE-1;
   
   char c;
   // url encode. convert SPACE to %20
@@ -148,9 +175,10 @@ void GetWeather() {
     }
   };
   *dst = *src;
+  
   uint16_t _port = ether.hisport; // save current port number
   ether.hisport = 80;
-  ether.browseUrl(PSTR("/weather"), dst, PSTR("*"), getweather_callback);
+  ether.browseUrl(PSTR("/weather"), dst, website, getweather_callback);
   ether.hisport = _port;
 }
 
@@ -185,37 +213,25 @@ void peel_http_header() { // remove the HTTP header
 
 void GetWeather() {
   EthernetClient client;
-  uint16_t port = 80;
-  char * delim;
+
   struct hostent *server;
-  
   nvm_read_block(tmp_buffer, (void*)ADDR_NVM_WEATHERURL, MAX_WEATHERURL);
-
-  // Check to see if url specifies a port number to use
-  delim = strchr(tmp_buffer, ':');
-  if (delim != NULL) {
-        *delim = 0;
-        port = atoi(delim+1);
-  }
-
   server = gethostbyname(tmp_buffer);
   if (!server) {
-    DEBUG_PRINT("can't resolve weather server - ");
-    DEBUG_PRINTLN(tmp_buffer);
+    DEBUG_PRINTLN("can't resolve weather server");
     return;
   }
-  DEBUG_PRINT("weather server ip:port - ");
+  DEBUG_PRINT("weather server ip:");
   DEBUG_PRINT(((uint8_t*)server->h_addr)[0]);
-  DEBUG_PRINT(".");
-  DEBUG_PRINT(((uint8_t*)server->h_addr)[1]);
-  DEBUG_PRINT(".");
-  DEBUG_PRINT(((uint8_t*)server->h_addr)[2]);
-  DEBUG_PRINT(".");
-  DEBUG_PRINT(((uint8_t*)server->h_addr)[3]);
   DEBUG_PRINT(":");
-  DEBUG_PRINTLN(port);
+  DEBUG_PRINT(((uint8_t*)server->h_addr)[1]);
+  DEBUG_PRINT(":");
+  DEBUG_PRINT(((uint8_t*)server->h_addr)[2]);
+  DEBUG_PRINT(":");
+  DEBUG_PRINTLN(((uint8_t*)server->h_addr)[3]);
 
-  if (!client.connect((uint8_t*)server->h_addr, port)) {
+  if (!client.connect((uint8_t*)server->h_addr, 80)) {
+    DEBUG_PRINTLN("failed to connect to weather server");
     client.stop();
     return;
   }
@@ -224,14 +240,14 @@ void GetWeather() {
   char tmp[100];
   read_from_file(wtopts_filename, tmp, 100);
   bf.emit_p(PSTR("$D.py?loc=$E&key=$E&fwv=$D&wto=$S"),
-                (int) os.options[OPTION_USE_WEATHER],
+                (int) os.options[OPTION_USE_WEATHER].value,
                 ADDR_NVM_LOCATION,
                 ADDR_NVM_WEATHER_KEY,
-                (int)os.options[OPTION_FW_VERSION],
+                (int)os.options[OPTION_FW_VERSION].value,
                 tmp);    
 
   char *src=tmp_buffer+strlen(tmp_buffer);
-  char *dst=tmp_buffer+TMP_BUFFER_SIZE-12;
+  char *dst=tmp_buffer+TMP_BUFFER_SIZE-1;
   
   char c;
   // url encode. convert SPACE to %20
@@ -252,9 +268,7 @@ void GetWeather() {
   char urlBuffer[255];
   strcpy(urlBuffer, "GET /weather");
   strcat(urlBuffer, dst);
-  strcat(urlBuffer, " HTTP/1.0\r\nHOST: ");
-  strcat(urlBuffer, server->h_name);
-  strcat(urlBuffer, "\r\n\r\n");
+  strcat(urlBuffer, " HTTP/1.0\r\nHOST: weather.opensprinkler.com\r\n\r\n");
   
   DEBUG_PRINTLN(urlBuffer);
   client.write((uint8_t *)urlBuffer, strlen(urlBuffer));
@@ -272,7 +286,6 @@ void GetWeather() {
     }
     peel_http_header();
     getweather_callback(0, 0, ETHER_BUFFER_SIZE);
-    break;
   }
   client.stop();
 }

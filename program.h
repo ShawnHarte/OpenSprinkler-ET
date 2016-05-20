@@ -81,8 +81,8 @@ public:
   // 1: fixed start time (give arbitrary start times up to MAX_NUM_STARTTIMEs)
   byte starttime_type: 1;
 
-  // misc. data
-  byte dummy1: 1;
+  // use et
+  byte use_et: 1;
   
   // weekly:   days[0][0..6] correspond to Monday till Sunday
   // bi-weekly:days[0][0..6] and [1][0..6] store two weeks
@@ -106,6 +106,8 @@ public:
   int16_t starttimes[MAX_NUM_STARTTIMES];
 
   byte durations[MAX_NUM_STATIONS];  // duration / water time of each station
+  
+  bool pheight[MAX_NUM_STATIONS]; // Plant 0 = less than 4" 1 = greater than 4"
   
   char name[PROGRAM_NAME_SIZE];
 
@@ -140,9 +142,9 @@ public:
 class ProgramData {
 public:  
   static RuntimeQueueStruct queue[];
-  static byte nqueue;         // number of queue elements
-  static byte station_qid[];  // this array stores the queue element index for each scheduled station
-  static byte nprograms;      // number of programs
+  static byte nqueue;
+  static byte station_qid[];
+  static byte nprograms;     // number of programs
   static LogStruct lastrun;
   static ulong last_seq_stop_time;  // the last stop time of a sequential station
   

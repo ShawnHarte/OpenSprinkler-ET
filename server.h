@@ -24,6 +24,8 @@
 #ifndef _SERVER_H
 #define _SERVER_H
 
+byte server_json_log(char *p);
+
 #if defined(ARDUINO)
 
 #else
