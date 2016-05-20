@@ -43,26 +43,31 @@
 #include "defines.h"
 #include "utils.h"
 
+/** Option data structure */
+struct OptionStruct{
+  byte value;     // each option value is stored as a byte
+  byte max;       // maximum value of the option
+  const char* str;      // full name
+  const char* json_str; // json name
+};
+
 /** Non-volatile data */
 struct NVConData {
-  uint16_t sunrise_time;  // sunrise time (in minutes)
-  uint16_t sunset_time;   // sunset time (in minutes)
-  uint32_t rd_stop_time;  // rain delay stop time
-  uint32_t external_ip;   // external ip
+  uint16_t sunrise_time;     // sunrise time (in minutes)
+  uint16_t sunset_time;      // sunset time (in minutes)
+  uint32_t rd_stop_time;     // rain delay stop time
+  uint32_t external_ip;      // external ip
+  int water_balance[2];      // water balance for low and high plants
+  uint16_t et_run_today[2];  // balance run today
+  byte predicted_rain;       // predicted rainfall for today in mm*10 max 25.5mm
+  int ethist[4];
+  uint16_t last_day;            //
 };
 
 /** Station special attribute data */
 struct StationSpecialData {
   byte type;
-  byte data[STATION_SPECIAL_DATA_SIZE];
-};
-
-/** Remote station data structure */
-// this must fit in STATION_SPECIAL_DATA_SIZE
-struct RemoteStationData {
-  byte ip[4];
-  uint16_t port;
-  byte sid;
+  byte data[MAX_STATION_SPECIAL_DATA];
 };
 
 /** Volatile controller status bits */
@@ -104,23 +109,19 @@ public:
   static byte nboards, nstations;
   static byte hw_type;           // hardware type
 
-  static byte options[];  // option values, max, name, and flag
+  static OptionStruct options[];  // option values, max, name, and flag
 
   static byte station_bits[];     // station activation bits. each byte corresponds to a board (8 stations)
                                   // first byte-> master controller, second byte-> ext. board 1, and so on
-
+  
   // variables for time keeping
-  static ulong sensor_lasttime;  // time when the last sensor reading is recorded
-  static ulong flowcount_time_ms;// time stamp when new flow sensor click is received (in milliseconds)
-  static ulong flowcount_rt;     // flow count (for computing real-time flow rate)
-  static ulong flowcount_log_start; // starting flow count (for logging)
+  static ulong sensor_lasttime;  // time when the most recent sensor reading was performed
   static ulong raindelay_start_time;  // time when the most recent rain delay started
   static byte  button_timeout;        // button timeout
   static ulong checkwt_lasttime;      // time when weather was checked
   static ulong checkwt_success_lasttime; // time when weather check was successful
   // member functions
   // -- setup
-  static void update_dev();   // update software for Linux instances
   static void reboot_dev();   // reboot the microcontroller
   static void begin();        // initialization, must call this function before calling other functions
   static byte start_network();  // initialize network with the given mac and port
@@ -131,14 +132,12 @@ public:
   // -- station names and attributes
   static void get_station_name(byte sid, char buf[]); // get station name
   static void set_station_name(byte sid, char buf[]); // set station name
-  static uint16_t parse_rfstation_code(byte *code, ulong *on, ulong *off); // parse rf code into on/off/time sections
-  static void switch_rfstation(byte *code, bool turnon);  // switch rf station
-  static void switch_remotestation(byte *code, bool turnon); // switch remote station
-  static void switch_gpiostation(byte *code, bool turnon); // switch gpio station
+  static uint16_t get_station_name_rf(byte sid, ulong *on, ulong *off); // get station name and parse into RF code
+  static void send_rfstation_signal(byte sid, bool status);
   static void station_attrib_bits_save(int addr, byte bits[]); // save station attribute bits to nvm
   static void station_attrib_bits_load(int addr, byte bits[]); // load station attribute bits from nvm
   static byte station_attrib_bits_read(int addr); // read one station attribte byte from nvm
-
+  
   // -- options and data storeage
   static void nvdata_load();
   static void nvdata_save();
@@ -161,8 +160,7 @@ public:
   static int detect_exp();        // detect the number of expansion boards
   static byte weekday_today();    // returns index of today's weekday (Monday is 0)
 
-  static byte set_station_bit(byte sid, byte value); // set station bit of one station (sid->station index, value->0/1)
-  static void switch_special_station(byte sid, byte value); // swtich special station
+  static void set_station_bit(byte sid, byte value); // set station bit of one station (sid->station index, value->0/1)
   static void clear_all_station_bits(); // clear all station bits
   static void apply_all_station_bits(); // apply all station bits (activate/deactive values)
 
@@ -191,9 +189,6 @@ private:
   static void lcd_print_2digit(int v);  // print a integer in 2 digits
   static void lcd_start();
   static byte button_read_busy(byte pin_butt, byte waitmode, byte butt, byte is_holding);
-#if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
-  static byte engage_booster;
-#endif
 #endif // LCD functions
 };
 
