@@ -1030,7 +1030,15 @@ byte server_change_options(char *p)
 
   if(weather_change) {
     os.checkwt_lasttime = 0;  // force weather update
-	// gracefully reset ET
+	os.nvdata.et_run_today[0] = 0;
+    os.nvdata.et_run_today[1] = 0;
+	os.nvdata.water_balance[0] = 0;
+	os.nvdata.water_balance[1] = 0;
+	os.nvdata.predicted_rain = 0;
+	os.nvdata.ethist[0] = 0;
+	os.nvdata.ethist[1] = 0;
+	os.nvdata.ethist[2] = 0;
+	os.nvdata.ethist[3] = 0;
   }
 
   if(network_change) {
@@ -1477,3 +1485,4 @@ unsigned long getNtpTime()
   return 0;
 }
 #endif
+
