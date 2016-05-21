@@ -107,7 +107,7 @@ public:
 
   byte durations[MAX_NUM_STATIONS];  // duration / water time of each station
   
-  bool pheight[MAX_NUM_STATIONS]; // Plant 0 = less than 4" 1 = greater than 4"
+  byte pheight[MAX_NUM_STATIONS]; // Plant 0 = less than 4" 1 = greater than 4"
   
   char name[PROGRAM_NAME_SIZE];
 
@@ -167,3 +167,4 @@ private:
 };
 
 #endif  // _PROGRAM_H
+
