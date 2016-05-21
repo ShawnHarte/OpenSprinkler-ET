@@ -411,8 +411,10 @@ void do_loop()
               // if the program is set to use weather scaling
               if (prog.use_weather) {
 				  if (prog.use_et) {
-					  if ((os.nvdata.water_balance[prog.pheight[sid]]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[prog.pheight[sid]])) >= os.options[OPTION_ET_MIN].value) {
-						  water_time = water_time * min((os.nvdata.water_balance[prog.pheight[sid]]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[prog.pheight[sid]])), (os.options[OPTION_ET_MAX].value)) / 10;
+					  byte p_hgt = prog.pheight[sid];
+					  int st_et = os.nvdata.water_balance[p_hgt]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[p_hgt]);
+					  if ( st_et >= os.options[OPTION_ET_MIN].value ) {
+						  water_time = water_time * (min(st_et, os.options[OPTION_ET_MAX].value)) / 10;
 					  } else {
 						  water_time = 0;
 					  }
@@ -444,8 +446,8 @@ void do_loop()
           }// for sid
 		  if (prog.use_et) {
 			  for (byte x=0;x<2;x++){
-				  if ((os.nvdata.water_balance[x]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[x])) > (os.options[OPTION_ET_MIN].value)) {
-					  os.nvdata.et_run_today[x] += max(min((os.nvdata.water_balance[x]-os.nvdata.predicted_rain), os.options[OPTION_ET_MAX].value),0);
+				  if ((os.nvdata.water_balance[x] - (os.nvdata.predicted_rain + os.nvdata.et_run_today[x])) > (os.options[OPTION_ET_MIN].value)) {
+					  os.nvdata.et_run_today[x] = os.nvdata.et_run_today[x] + (max(min((os.nvdata.water_balance[x]-os.nvdata.predicted_rain), os.options[OPTION_ET_MAX].value),0));
 				  }
 			  }
 			  os.nvdata_save();
@@ -1085,3 +1087,4 @@ int main(int argc, char *argv[]) {
   return 0;
 }
 #endif
+
