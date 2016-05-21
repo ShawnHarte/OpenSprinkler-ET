@@ -290,4 +290,3 @@ void GetWeather() {
   client.stop();
 }
 #endif // GetWeather()
-
