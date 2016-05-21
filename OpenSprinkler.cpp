@@ -188,7 +188,7 @@ OptionStruct OpenSprinkler::options[NUM_OPTIONS] = {
   {100, 255, _str_lit,  _json_lit},   // lcd backlight
   {15,  255, _str_dim,  _json_dim},   // lcd dimming
   {80,  250, _str_bst,  _json_bst},   // boost time (only valid to DC and LATCH type)
-  {3,   255, _str_uwt,  _json_uwt},   // weather algorithm (0 means not using weather algorithm)
+  {0,   255, _str_uwt,  _json_uwt},   // weather algorithm (0 means not using weather algorithm)
   {50,  255, _str_ntp1, _json_ntp1},  // this and the next three bytes define the ntp server ip
   {97,  255, _str_ntp2, _json_ntp2},
   {210, 255, _str_ntp3, _json_ntp3},
@@ -1369,4 +1369,6 @@ void OpenSprinkler::lcd_set_brightness(byte value) {
   }
 }
 #endif  // end of LCD and button functions
+
+
 
