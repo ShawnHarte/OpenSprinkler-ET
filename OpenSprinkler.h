@@ -60,7 +60,7 @@ struct NVConData {
   int water_balance[2];      // water balance for low and high plants
   uint16_t et_run_today[2];  // balance run today
   byte predicted_rain;       // predicted rainfall for today in mm*10 max 25.5mm
-  int ethist[4];
+  int ethist[2];
   uint16_t last_day;            //
 };
 
@@ -193,4 +193,5 @@ private:
 };
 
 #endif  // _OPENSPRINKLER_H
+
 
