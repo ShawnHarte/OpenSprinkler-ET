@@ -756,7 +756,7 @@ void server_json_controller_main() {
   byte bid, sid;
   ulong curr_time = os.now_tz();
   //os.nvm_string_get(ADDR_NVM_LOCATION, tmp_buffer);
-  bfill.emit_p(PSTR("\"devt\":$L,\"nbrd\":$D,\"en\":$D,\"rd\":$D,\"rs\":$D,\"rdst\":$L,\"loc\":\"$E\",\"wtkey\":\"$E\",\"sunrise\":$D,\"sunset\":$D,\"eip\":$L,\"lwc\":$L,\"lswc\":$L,\"lrun\":[$D,$D,$D,$L],\"ethist\":[$D,$D,$D,$D],\"sbits\":["),
+  bfill.emit_p(PSTR("\"devt\":$L,\"nbrd\":$D,\"en\":$D,\"rd\":$D,\"rs\":$D,\"rdst\":$L,\"loc\":\"$E\",\"wtkey\":\"$E\",\"sunrise\":$D,\"sunset\":$D,\"eip\":$L,\"lwc\":$L,\"lswc\":$L,\"lrun\":[$D,$D,$D,$L],\"ethist\":[$D,$D],\"sbits\":["),
               curr_time,
               os.nboards,
               os.status.enabled,
@@ -775,9 +775,7 @@ void server_json_controller_main() {
               pd.lastrun.duration,
               pd.lastrun.endtime,
 			  os.nvdata.ethist[0],
-			  os.nvdata.ethist[1],
-			  os.nvdata.ethist[2],
-			  os.nvdata.ethist[3]);
+			  os.nvdata.ethist[1]);
   // print sbits
   for(bid=0;bid<os.nboards;bid++)
     bfill.emit_p(PSTR("$D,"), os.station_bits[bid]);
@@ -835,7 +833,7 @@ byte server_home()
 
 /**
   Change controller variables
-  Command: /cv?pw=xxx&rsn=x&rbt=x&en=x&rd=x
+  Command: /cv?pw=xxx&rsn=x&rbt=x&en=x&rd=x&eh0=x&eh1=x
 
   pw:  password
   rsn: reset all stations (0 or 1)
@@ -871,6 +869,16 @@ byte server_change_values(char *p)
     } else if (rd==0){
       os.raindelay_stop();
     } else  return HTML_DATA_OUTOFBOUND;
+  }
+  
+  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("eh0"), true)) {
+	  int v = atoi(tmp_buffer);
+	  os.nvdata.ethist[0] = v;
+  }
+  
+  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("eh1"), true)) {
+	  int v = atoi(tmp_buffer);
+	  os.nvdata.ethist[1] = v;
   }
 
   return HTML_SUCCESS;
@@ -1037,8 +1045,7 @@ byte server_change_options(char *p)
 	os.nvdata.predicted_rain = 0;
 	os.nvdata.ethist[0] = 0;
 	os.nvdata.ethist[1] = 0;
-	os.nvdata.ethist[2] = 0;
-	os.nvdata.ethist[3] = 0;
+	os.nvdata_save();
   }
 
   if(network_change) {
@@ -1485,4 +1492,3 @@ unsigned long getNtpTime()
   return 0;
 }
 #endif
-
