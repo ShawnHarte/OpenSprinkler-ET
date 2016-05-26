@@ -380,8 +380,7 @@ void do_loop()
     
 	if(curr_day != os.nvdata.last_day){
 		for (byte x=0;x<2;x++) {
-			os.nvdata.ethist[x] = os.nvdata.water_balance[x];
-			os.nvdata.ethist[x+2] = os.nvdata.et_run_today[x];
+			os.nvdata.ethist[x] = os.nvdata.water_balance[x] - os.nvdata.et_run_today[x];
 			os.nvdata.et_run_today[x] = 0;
 		}
 		os.nvdata.last_day = curr_day;
@@ -446,12 +445,12 @@ void do_loop()
           }// for sid
 		  if (prog.use_et) {
 			  for (byte x=0;x<2;x++){
-				  if ((os.nvdata.water_balance[x] - (os.nvdata.predicted_rain + os.nvdata.et_run_today[x])) > (os.options[OPTION_ET_MIN].value)) {
-					  os.nvdata.et_run_today[x] = os.nvdata.et_run_today[x] + (max(min((os.nvdata.water_balance[x]-os.nvdata.predicted_rain), os.options[OPTION_ET_MAX].value),0));
+				  int st_et = os.nvdata.water_balance[x]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[x]);
+				  if ( st_et > os.options[OPTION_ET_MIN].value ) {
+					  os.nvdata.et_run_today[x] += min(st_et, os.options[OPTION_ET_MAX].value);
 				  }
 			  }
 			  os.nvdata_save();
-			  write_log(LOGDATA_ET, curr_time);
 		  }//if use_et
         }// if check_match
       }// for pid
@@ -1087,4 +1086,3 @@ int main(int argc, char *argv[]) {
   return 0;
 }
 #endif
-
