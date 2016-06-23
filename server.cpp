@@ -371,6 +371,7 @@ void server_json_stations_main()
   server_json_stations_attrib(PSTR("stn_dis"), ADDR_NVM_STNDISABLE);
   server_json_stations_attrib(PSTR("stn_seq"), ADDR_NVM_STNSEQ);
   server_json_stations_attrib(PSTR("stn_spe"), ADDR_NVM_STNSPE);
+  server_json_stations_attrib(PSTR("stn_hgt"), ADDR_NVM_STNPHT);
   bfill.emit_p(PSTR("\"snames\":["));
   byte sid;
   for(sid=0;sid<os.nstations;sid++) {
@@ -411,7 +412,7 @@ void server_change_stations_attrib(char *p, char header, int addr)
 
 /**
   Change Station Name and Attributes
-  Command: /cs?pw=xxx&s?=x&m?=x&i?=x&n?=x&d?=x
+  Command: /cs?pw=xxx&s?=x&m?=x&i?=x&n?=x&d?=x&h?=x
 
   pw: password
   s?: station name (? is station index, starting from 0)
@@ -419,6 +420,7 @@ void server_change_stations_attrib(char *p, char header, int addr)
   i?: ignore rain bit field
   n?: master2 operation bit field
   d?: disable sation bit field
+  h?: plant height bit field
 */
 byte server_change_stations(char *p)
 {
@@ -439,6 +441,7 @@ byte server_change_stations(char *p)
   server_change_stations_attrib(p, 'd', ADDR_NVM_STNDISABLE); // disable
   server_change_stations_attrib(p, 'q', ADDR_NVM_STNSEQ); // sequential
   server_change_stations_attrib(p, 'p', ADDR_NVM_STNSPE); // special
+  server_change_stations_attrib(p, 'h', ADDR_NVM_STNPHT); // height
 
   return HTML_SUCCESS;
 }
@@ -565,7 +568,6 @@ byte server_moveup_program(char *p) {
   flag:  program flag
   start?:up to 4 start times
   dur?:  station water time
-  pht?:  plant height 0: =<4" 1: is >4" 
   name:  program name
 */
 prog_char _str_program[] PROGMEM = "Program ";
@@ -622,12 +624,6 @@ byte server_change_program(char *p) {
     uint16_t pre = parse_listdata(&pv);
     prog.durations[i] = water_time_encode(pre);
   }
-  pv++; // this should be a ','
-  pv++; // this should be a '['
-  for (i=0;i<os.nstations;i++) {
-    uint16_t pre = parse_listdata(&pv);
-    prog.pheight[i] = (bool)(pre);
-  }
   pv++; // this should be a ']'
   pv++; // this should be a ']'
   // parse program name
@@ -635,7 +631,7 @@ byte server_change_program(char *p) {
   // i should be equal to os.nstations at this point
   for(;i<MAX_NUM_STATIONS;i++) {
     prog.durations[i] = 0;     // clear unused field
-	prog.pheight[i] = 0;
+	//prog.pheight[i] = 0;
   }
 
   // process interval day remainder (relative-> absolute)
@@ -715,11 +711,7 @@ void server_json_programs_main() {
     for (i=0; i<os.nstations-1; i++) {
       bfill.emit_p(PSTR("$L,"),(unsigned long)water_time_decode(prog.durations[i]));
     }
-    bfill.emit_p(PSTR("$L],["),(unsigned long)water_time_decode(prog.durations[i])); // this is the last element
-	for (i=0; i<os.nstations-1; i++) {
-      bfill.emit_p(PSTR("$L,"),(unsigned long)prog.pheight[i]);
-    }
-    bfill.emit_p(PSTR("$L],\""),(unsigned long)prog.pheight[i]); // this is the last element
+    bfill.emit_p(PSTR("$L],\""),(unsigned long)water_time_decode(prog.durations[i])); // this is the last element
     // program name
     strncpy(tmp_buffer, prog.name, PROGRAM_NAME_SIZE);
     tmp_buffer[PROGRAM_NAME_SIZE] = 0;  // make sure the string ends
@@ -755,8 +747,11 @@ byte server_view_scripturl(char *p) {
 void server_json_controller_main() {
   byte bid, sid;
   ulong curr_time = os.now_tz();
+  int adjusted_et[2];
+  adjusted_et[0] = os.nvdata.water_balance[0] - (os.nvdata.et_run_today[0] + os.nvdata.predicted_rain);
+  adjusted_et[1] = os.nvdata.water_balance[1] - (os.nvdata.et_run_today[1] + os.nvdata.predicted_rain);
   //os.nvm_string_get(ADDR_NVM_LOCATION, tmp_buffer);
-  bfill.emit_p(PSTR("\"devt\":$L,\"nbrd\":$D,\"en\":$D,\"rd\":$D,\"rs\":$D,\"rdst\":$L,\"loc\":\"$E\",\"wtkey\":\"$E\",\"sunrise\":$D,\"sunset\":$D,\"eip\":$L,\"lwc\":$L,\"lswc\":$L,\"lrun\":[$D,$D,$D,$L],\"ethist\":[$D,$D,$D,$D],\"sbits\":["),
+  bfill.emit_p(PSTR("\"devt\":$L,\"nbrd\":$D,\"en\":$D,\"rd\":$D,\"rs\":$D,\"rdst\":$L,\"loc\":\"$E\",\"wtkey\":\"$E\",\"sunrise\":$D,\"sunset\":$D,\"eip\":$L,\"lwc\":$L,\"lswc\":$L,\"lrun\":[$D,$D,$D,$L],\"ethist\":[$D,$D],\"etcurr\":[$D,$D],\"sbits\":["),
               curr_time,
               os.nboards,
               os.status.enabled,
@@ -776,8 +771,8 @@ void server_json_controller_main() {
               pd.lastrun.endtime,
 			  os.nvdata.ethist[0],
 			  os.nvdata.ethist[1],
-			  os.nvdata.ethist[2],
-			  os.nvdata.ethist[3]);
+			  adjusted_et[0],
+			  adjusted_et[1]);
   // print sbits
   for(bid=0;bid<os.nboards;bid++)
     bfill.emit_p(PSTR("$D,"), os.station_bits[bid]);
@@ -835,7 +830,7 @@ byte server_home()
 
 /**
   Change controller variables
-  Command: /cv?pw=xxx&rsn=x&rbt=x&en=x&rd=x
+  Command: /cv?pw=xxx&rsn=x&rbt=x&en=x&rd=x&eh0=x&eh1=x
 
   pw:  password
   rsn: reset all stations (0 or 1)
@@ -871,6 +866,18 @@ byte server_change_values(char *p)
     } else if (rd==0){
       os.raindelay_stop();
     } else  return HTML_DATA_OUTOFBOUND;
+  }
+  
+  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("eh0"), true)) {
+	  int v = atoi(tmp_buffer);
+	  os.nvdata.ethist[0] = v;
+	  os.nvdata_save();
+  }
+  
+  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("eh1"), true)) {
+	  int v = atoi(tmp_buffer);
+	  os.nvdata.ethist[1] = v;
+	  os.nvdata_save();
   }
 
   return HTML_SUCCESS;
@@ -1030,7 +1037,14 @@ byte server_change_options(char *p)
 
   if(weather_change) {
     os.checkwt_lasttime = 0;  // force weather update
-	// gracefully reset ET
+	os.nvdata.et_run_today[0] = 0;
+    os.nvdata.et_run_today[1] = 0;
+	os.nvdata.water_balance[0] = 0;
+	os.nvdata.water_balance[1] = 0;
+	os.nvdata.predicted_rain = 0;
+	os.nvdata.ethist[0] = 0;
+	os.nvdata.ethist[1] = 0;
+	os.nvdata_save();
   }
 
   if(network_change) {
@@ -1161,7 +1175,7 @@ byte server_change_manual(char *p) {
   start: start time (epoch time)
   end:   end time (epoch time)
   type:  type of log records (optional)
-         rs, rd, wl
+         rs, rd, wl, et
          if unspecified, output all records
 */
 byte server_json_log(char *p) {
@@ -1246,8 +1260,8 @@ byte server_json_log(char *p) {
       // where xx is the type name
       if (type_specified && strncmp(type, tmp_buffer+4, 2))
         continue;
-      // if type is not specified, output everything except "wl" records
-      if (!type_specified && !strncmp("wl", tmp_buffer+4, 2))
+      // if type is not specified, output everything except "wl" and "et" records
+      if (!type_specified && (!strncmp("wl", tmp_buffer+4, 2) || !strncmp("et", tmp_buffer+4, 2)))
         continue;
       // if this is the first record, do not print comma
       if (first)  { bfill.emit_p(PSTR("$S"), tmp_buffer); first=false;}

@@ -60,7 +60,7 @@ struct NVConData {
   int water_balance[2];      // water balance for low and high plants
   uint16_t et_run_today[2];  // balance run today
   byte predicted_rain;       // predicted rainfall for today in mm*10 max 25.5mm
-  int ethist[4];
+  int ethist[2];
   uint16_t last_day;            //
 };
 
@@ -138,7 +138,7 @@ public:
   static void station_attrib_bits_load(int addr, byte bits[]); // load station attribute bits from nvm
   static byte station_attrib_bits_read(int addr); // read one station attribte byte from nvm
   
-  // -- options and data storeage
+  // -- options and data storage
   static void nvdata_load();
   static void nvdata_save();
 

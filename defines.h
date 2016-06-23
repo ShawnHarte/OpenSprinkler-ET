@@ -63,19 +63,19 @@
 #if defined(ARDUINO)
 
 /** 2KB NVM (ATmega644) data structure:
-  * |         |     |  ---STRING PARAMETERS---      |           |   ----STATION ATTRIBUTES-----      |          |
-  * | PROGRAM | CON | PWD | LOC | JURL | WURL | KEY | STN_NAMES | MAS | IGR | MAS2 | DIS | SEQ | SPE | OPTIONS  |
-  * |  (968)  |(48) |(32) |(48) | (40) | (40) |(32) |   (768)   | (6) | (6) |  (6) | (6) | (6) | (6) |  (46)    |
-  * |         |     |     |     |      |      |     |           |     |     |      |     |     |     |          |
-  * 0        981  1006   1038  1086  1126   1166   1198        1966  1972  1978   1984  1990  1996  2002      2048
+  * |         |     |  ---STRING PARAMETERS---      |           |       -----STATION ATTRIBUTES-----       |          |
+  * | PROGRAM | CON | PWD | LOC | JURL | WURL | KEY | STN_NAMES | MAS | IGR | MAS2 | DIS | SEQ | SPE | PHT | OPTIONS  |
+  * |  (952)  |(48) |(32) |(48) | (40) | (40) |(32) |   (768)   | (6) | (6) |  (6) | (6) | (6) | (6) | (6) |  (46)    |
+  * |         |     |     |     |      |      |     |           |     |     |      |     |     |     |     |          |
+  * 0        952  1000   1032  1080  1120   1160   1192        1960  1966  1972   1978  1984  1990  1996  2002      2048
   */
 
 /** 4KB NVM (ATmega1284) data structure:
-  * |         |     |  ---STRING PARAMETERS---      |           |   ----STATION ATTRIBUTES-----      |          |
-  * | PROGRAM | CON | PWD | LOC | JURL | WURL | KEY | STN_NAMES | MAS | IGR | MAS2 | DIS | SEQ | SPE | OPTIONS  |
-  * |  (2438) |(12) |(32) |(48) | (48) | (48) |(32) |   (1344)  | (7) | (7) |  (7) | (7) | (7) | (7) |   (52)   |
-  * |         |     |     |     |      |      |     |           |     |     |      |     |     |     |          |
-  * 0       2438  2450   2482  2530  2578   2626   2658        4002  4009  4016   4023  4030  4037  4044      4096
+  * |         |     |  ---STRING PARAMETERS---      |           |       -----STATION ATTRIBUTES-----       |          |
+  * | PROGRAM | CON | PWD | LOC | JURL | WURL | KEY | STN_NAMES | MAS | IGR | MAS2 | DIS | SEQ | SPE | PHT | OPTIONS  |
+  * |  (2395) |(48) |(32) |(48) | (48) | (48) |(32) |   (1344)  | (7) | (7) |  (7) | (7) | (7) | (7) | (7) |   (52)   |
+  * |         |     |     |     |      |      |     |           |     |     |      |     |     |     |     |          |
+  * 0       2395  2443   2475  2523  2571   2619   2651        3995  4002  4009   4016  4023  4030  4037  4044      4096
   */
 
   #if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__) // for 4KB NVM
@@ -86,7 +86,7 @@
     #define NVM_SIZE            4096  // For AVR, nvm data is stored in EEPROM, ATmega1284 has 4K EEPROM
     #define STATION_NAME_SIZE   24    // maximum number of characters in each station name
 
-    #define MAX_PROGRAMDATA     2400  // program data
+    #define MAX_PROGRAMDATA     2395  // program data
     #define MAX_NVCONDATA       48    // non-volatile controller data
     #define MAX_USER_PASSWORD   32    // user password
     #define MAX_LOCATION        48    // location string
@@ -102,7 +102,7 @@
     #define NVM_SIZE            2048  // For AVR, nvm data is stored in EEPROM, ATmega644 has 2K EEPROM
     #define STATION_NAME_SIZE   16    // maximum number of characters in each station name
 
-    #define MAX_PROGRAMDATA     958   // program data
+    #define MAX_PROGRAMDATA     952   // program data
     #define MAX_NVCONDATA       48     // non-volatile controller data
     #define MAX_USER_PASSWORD   32    // user password
     #define MAX_LOCATION        48    // location string
@@ -124,7 +124,7 @@
   #define NVM_SIZE            4096
   #define STATION_NAME_SIZE   24    // maximum number of characters in each station name
 
-  #define MAX_PROGRAMDATA     2400  // program data
+  #define MAX_PROGRAMDATA     2395  // program data
   #define MAX_NVCONDATA       48     // non-volatile controller data
   #define MAX_USER_PASSWORD   32    // user password
   #define MAX_LOCATION        48    // location string
@@ -149,7 +149,8 @@
 #define ADDR_NVM_STNDISABLE    (ADDR_NVM_MAS_OP_2+(MAX_EXT_BOARDS+1))// station disable bits
 #define ADDR_NVM_STNSEQ        (ADDR_NVM_STNDISABLE+(MAX_EXT_BOARDS+1))// station sequential bits
 #define ADDR_NVM_STNSPE        (ADDR_NVM_STNSEQ+(MAX_EXT_BOARDS+1)) // station special bits (i.e. non-standard stations)
-#define ADDR_NVM_OPTIONS       (ADDR_NVM_STNSPE+(MAX_EXT_BOARDS+1))  // options
+#define ADDR_NVM_STNPHT        (ADDR_NVM_STNSPE+(MAX_EXT_BOARDS+1)) // station plant height bits (0= <4", 1= >4")
+#define ADDR_NVM_OPTIONS       (ADDR_NVM_STNPHT+(MAX_EXT_BOARDS+1))  // options
 
 /** Default password, location string, weather key, script urls */
 #define DEFAULT_PASSWORD          "opendoor"

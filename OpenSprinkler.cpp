@@ -147,61 +147,61 @@ static prog_char _str_mton2[]PROGMEM = "Mas2  on adj:";
 static prog_char _str_mtof2[]PROGMEM = "Mas2 off adj:";
 static prog_char _str_fwm[]  PROGMEM = "FWm:";
 static prog_char _str_fpr [] PROGMEM = "Pulse rate:";
-static prog_char _str_etmn[] PROGMEM = "ET min";
-static prog_char _str_etmx[] PROGMEM = "ET max";
+static prog_char _str_etmn[] PROGMEM = "ET min:";
+static prog_char _str_etmx[] PROGMEM = "ET max:";
 static prog_char _str_reset[] PROGMEM = "Reset all?";
 
 OptionStruct OpenSprinkler::options[NUM_OPTIONS] = {
-  {OS_FW_VERSION, 0, _str_fwv, _json_fwv}, // firmware version
-  {28,  108, _str_tz,   _json_tz},    // default time zone: GMT-5
-  {1,   1,   _str_ntp,  _json_ntp},   // use NTP sync
-  {1,   1,   _str_dhcp, _json_dhcp},  // 0: use static ip, 1: use dhcp
-  {0,   255, _str_ip1,  _json_ip1},   // this and next 3 bytes define static ip
-  {0,   255, _str_ip2,  _json_ip2},
-  {0,   255, _str_ip3,  _json_ip3},
-  {0,   255, _str_ip4,  _json_ip4},
-  {0,   255, _str_gw1,  _json_gw1},   // this and next 3 bytes define static gateway ip
-  {0,   255, _str_ip2,  _json_gw2},
-  {0,   255, _str_ip3,  _json_gw3},
-  {0,   255, _str_ip4,  _json_gw4},
+  {OS_FW_VERSION, 0, _str_fwv, _json_fwv}, // firmware version                                           0
+  {28,  108, _str_tz,   _json_tz},    // default time zone: GMT-5                                        1
+  {1,   1,   _str_ntp,  _json_ntp},   // use NTP sync                                                    2
+  {1,   1,   _str_dhcp, _json_dhcp},  // 0: use static ip, 1: use dhcp                                   3
+  {0,   255, _str_ip1,  _json_ip1},   // this and next 3 bytes define static ip                          4
+  {0,   255, _str_ip2,  _json_ip2},   //                                                                 5
+  {0,   255, _str_ip3,  _json_ip3},   //                                                                 6
+  {0,   255, _str_ip4,  _json_ip4},   //                                                                 7
+  {0,   255, _str_gw1,  _json_gw1},   // this and next 3 bytes define static gateway ip                  8
+  {0,   255, _str_ip2,  _json_gw2},   //                                                                 9
+  {0,   255, _str_ip3,  _json_gw3},   //                                                                10
+  {0,   255, _str_ip4,  _json_gw4},   //                                                                11       
 #if defined(ARDUINO)                  // on AVR, the default HTTP port is 80
-  {80,  255, _str_hp,   _json_hp0},   // this and next byte define http port number
-  {0,   255, 0,         _json_hp1},
+  {80,  255, _str_hp,   _json_hp0},   // this and next byte define http port number                     12
+  {0,   255, 0,         _json_hp1},   //                                                                13
 #else                                 // on RPI/BBB/LINUX, the default HTTP port is 8080
-  {144, 255, _str_hp,   _json_hp0},   // this and next byte define http port number
-  {31,  255, 0,         _json_hp1},
+  {144, 255, _str_hp,   _json_hp0},   // this and next byte define http port number                     12
+  {31,  255, 0,         _json_hp1},   //                                                                13
 #endif
-  {OS_HW_VERSION, 0, _str_hwv, _json_hwv},
-  {0,   MAX_EXT_BOARDS, _str_ext, _json_ext}, // number of extension board. 0: no extension boards
-  {1,   1,   0,         0},           // the option 'sequential' is now retired
-  {128, 247, _str_sdt,  _json_sdt},   // station delay time (-59 minutes to 59 minutes).
-  {0,   MAX_NUM_STATIONS, _str_mas,  _json_mas},   // index of master station. 0: no master station
-  {0,   60,  _str_mton, _json_mton},  // master on time [0,60] seconds
-  {60,  120, _str_mtof, _json_mtof},  // master off time [-60,60] seconds
-  {0,   255, _str_sf,   _json_sf},    // sensor function (see SENSOR_TYPE macro defines)
-  {1,   1,   _str_rso,  _json_rso},   // rain sensor type. 0: normally closed; 1: normally open.
-  {100, 250, _str_wl,   _json_wl},    // water level (default 100%),
-  {1,   1,   _str_den,  _json_den},   // device enable
-  {0,   1,   _str_ipas, _json_ipas},  // 1: ignore password; 0: use password
-  {0,   255, _str_devid,_json_devid}, // device id
-  {130, 255, _str_con,  _json_con},   // lcd contrast
-  {100, 255, _str_lit,  _json_lit},   // lcd backlight
-  {15,  255, _str_dim,  _json_dim},   // lcd dimming
-  {80,  250, _str_bst,  _json_bst},   // boost time (only valid to DC and LATCH type)
-  {3,   255, _str_uwt,  _json_uwt},   // weather algorithm (0 means not using weather algorithm)
-  {50,  255, _str_ntp1, _json_ntp1},  // this and the next three bytes define the ntp server ip
-  {97,  255, _str_ntp2, _json_ntp2},
-  {210, 255, _str_ntp3, _json_ntp3},
-  {169, 255, _str_ntp4, _json_ntp4},
-  {1,   1,   _str_log,  _json_log},   // enable logging: 0: disable; 1: enable.
-  {0,   MAX_NUM_STATIONS, _str_mas2, _json_mas2},  // index of master 2. 0: no master2 station
-  {0,   60,  _str_mton2,_json_mton2},
-  {60,  120, _str_mtof2,_json_mtof2}, 
-  {OS_FW_MINOR, 0, _str_fwm, _json_fwm}, // firmware version  
-  {100, 255, _str_fpr,  _json_fpr0},
-  {0,   255, 0,         _json_fpr1},
-  {50,   127, _str_etmn, _json_etmn}, //min et required to water
-  {150,  255, _str_etmx, _json_etmx}, //max et to water per cycle
+  {OS_HW_VERSION, 0, _str_hwv, _json_hwv}, //                                                           14
+  {0,   MAX_EXT_BOARDS, _str_ext, _json_ext}, // number of extension board. 0: no extension boards      15
+  {1,   1,   0,         0},           // the option 'sequential' is now retired                         16
+  {128, 247, _str_sdt,  _json_sdt},   // station delay time (-59 minutes to 59 minutes).                17
+  {0,   MAX_NUM_STATIONS, _str_mas,  _json_mas},   // index of master station. 0: no master station     18
+  {0,   60,  _str_mton, _json_mton},  // master on time [0,60] seconds                                  19
+  {60,  120, _str_mtof, _json_mtof},  // master off time [-60,60] seconds                               20
+  {0,   255, _str_sf,   _json_sf},    // sensor function (see SENSOR_TYPE macro defines)                21
+  {1,   1,   _str_rso,  _json_rso},   // rain sensor type. 0: normally closed; 1: normally open.        22
+  {100, 250, _str_wl,   _json_wl},    // water level (default 100%),                                    23
+  {1,   1,   _str_den,  _json_den},   // device enable                                                  24
+  {0,   1,   _str_ipas, _json_ipas},  // 1: ignore password; 0: use password                            25
+  {0,   255, _str_devid,_json_devid}, // device id                                                      26
+  {130, 255, _str_con,  _json_con},   // lcd contrast                                                   27
+  {100, 255, _str_lit,  _json_lit},   // lcd backlight                                                  28
+  {15,  255, _str_dim,  _json_dim},   // lcd dimming                                                    29
+  {80,  250, _str_bst,  _json_bst},   // boost time (only valid to DC and LATCH type)                   30
+  {0,   255, _str_uwt,  _json_uwt},   // weather algorithm (0 means not using weather algorithm)        31
+  {50,  255, _str_ntp1, _json_ntp1},  // this and the next three bytes define the ntp server ip         32
+  {97,  255, _str_ntp2, _json_ntp2},  //                                                                33
+  {210, 255, _str_ntp3, _json_ntp3},  //                                                                34
+  {169, 255, _str_ntp4, _json_ntp4},  //                                                                35
+  {1,   1,   _str_log,  _json_log},   // enable logging: 0: disable; 1: enable.                         36
+  {0,   MAX_NUM_STATIONS, _str_mas2, _json_mas2},  // index of master 2. 0: no master2 station          37
+  {0,   60,  _str_mton2,_json_mton2}, //                                                                38
+  {60,  120, _str_mtof2,_json_mtof2}, //                                                                39
+  {OS_FW_MINOR, 0, _str_fwm, _json_fwm}, // firmware version                                            40 
+  {100, 255, _str_fpr,  _json_fpr0},  //                                                                41
+  {0,   255, 0,         _json_fpr1},  //                                                                42
+  {50,   127, _str_etmn, _json_etmn}, //min et required to water                                        43
+  {150,  255, _str_etmx, _json_etmx}, //max et to water per cycle                                       44
   {0,   1,   _str_reset,_json_reset}
 };
 

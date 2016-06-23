@@ -74,15 +74,17 @@ static void getweather_callback(byte status, uint16_t off, uint16_t len) {
   
   if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("et0"), true)) {
     v = atoi(tmp_buffer);
-    if (v != os.nvdata.water_balance[0]) {
-      os.nvdata.water_balance[0] = v;
+    v += os.nvdata.ethist[0];
+	if (v != os.nvdata.water_balance[0]) {
+		os.nvdata.water_balance[0] = v;
     }
   }
   
   if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("et1"), true)) {
     v = atoi(tmp_buffer);
+	v += os.nvdata.ethist[1];
     if (v != os.nvdata.water_balance[1]) {
-      os.nvdata.water_balance[1] =  v;
+		os.nvdata.water_balance[1] =  v;
     }
   }
 
@@ -142,11 +144,7 @@ void GetWeather() {
 
   //bfill=ether.tcpOffset();
   char tmp[40];
-  if (os.options[OPTION_USE_WEATHER].value == 3) {
-	  sprintf(tmp, "[%i,%i,%i,%i]",os.nvdata.ethist[0],os.nvdata.ethist[1],os.nvdata.ethist[2],os.nvdata.ethist[3]);
-  } else {
-	  read_from_file(wtopts_filename, tmp, 40);
-  }
+  read_from_file(wtopts_filename, tmp, 40);
   
   BufferFiller bf = (uint8_t*)tmp_buffer;
   bf.emit_p(PSTR("$D.py?loc=$E&key=$E&fwv=$D&wto=$S"),
@@ -154,8 +152,7 @@ void GetWeather() {
                 ADDR_NVM_LOCATION,
                 ADDR_NVM_WEATHER_KEY,
                 (int) os.options[OPTION_FW_VERSION].value,
-				tmp); //,
-				//server_json_log(PSTR("&hist=1&type=et")));
+				tmp); 
   // copy string to tmp_buffer, replacing all spaces with _
   char *src=tmp_buffer+strlen(tmp_buffer);
   char *dst=tmp_buffer+TMP_BUFFER_SIZE-1;

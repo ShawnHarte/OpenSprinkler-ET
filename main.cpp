@@ -380,8 +380,7 @@ void do_loop()
     
 	if(curr_day != os.nvdata.last_day){
 		for (byte x=0;x<2;x++) {
-			os.nvdata.ethist[x] = os.nvdata.water_balance[x];
-			os.nvdata.ethist[x+2] = os.nvdata.et_run_today[x];
+			os.nvdata.ethist[x] = os.nvdata.water_balance[x] - os.nvdata.et_run_today[x];
 			os.nvdata.et_run_today[x] = 0;
 		}
 		os.nvdata.last_day = curr_day;
@@ -411,8 +410,10 @@ void do_loop()
               // if the program is set to use weather scaling
               if (prog.use_weather) {
 				  if (prog.use_et) {
-					  if ((os.nvdata.water_balance[prog.pheight[sid]]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[prog.pheight[sid]])) >= os.options[OPTION_ET_MIN].value) {
-						  water_time = water_time * min((os.nvdata.water_balance[prog.pheight[sid]]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[prog.pheight[sid]])), (os.options[OPTION_ET_MAX].value)) / 10;
+					  byte p_hgt = ((os.station_attrib_bits_read(ADDR_NVM_STNPHT+bid)>>s)&1);
+					  int st_et = os.nvdata.water_balance[p_hgt]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[p_hgt]);
+					  if ( st_et >= os.options[OPTION_ET_MIN].value ) {
+						  water_time = water_time * (min(st_et, os.options[OPTION_ET_MAX].value)) / 10;
 					  } else {
 						  water_time = 0;
 					  }
@@ -444,12 +445,12 @@ void do_loop()
           }// for sid
 		  if (prog.use_et) {
 			  for (byte x=0;x<2;x++){
-				  if ((os.nvdata.water_balance[x]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[x])) > (os.options[OPTION_ET_MIN].value)) {
-					  os.nvdata.et_run_today[x] += max(min((os.nvdata.water_balance[x]-os.nvdata.predicted_rain), os.options[OPTION_ET_MAX].value),0);
+				  int st_et = os.nvdata.water_balance[x]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[x]);
+				  if ( st_et > os.options[OPTION_ET_MIN].value ) {
+					  os.nvdata.et_run_today[x] += min(st_et, os.options[OPTION_ET_MAX].value);
 				  }
 			  }
 			  os.nvdata_save();
-			  write_log(LOGDATA_ET, curr_time);
 		  }//if use_et
         }// if check_match
       }// for pid
@@ -946,15 +947,10 @@ void write_log(byte type, ulong curr_time) {
         itoa(os.options[OPTION_WATER_PERCENTAGE].value, tmp_buffer+strlen(tmp_buffer), 10);
         break;
 	  case LOGDATA_ET:
-	    itoa(os.nvdata.water_balance[0], tmp_buffer+strlen(tmp_buffer), 10);
+	    itoa((os.nvdata.water_balance[0]-(os.nvdata.et_run_today[0]+os.nvdata.predicted_rain)), tmp_buffer+strlen(tmp_buffer), 10);
 		strcat_P(tmp_buffer, PSTR(","));
-		itoa(os.nvdata.water_balance[1], tmp_buffer+strlen(tmp_buffer), 10);
-		strcat_P(tmp_buffer, PSTR(","));
-		itoa(os.nvdata.et_run_today[0], tmp_buffer+strlen(tmp_buffer), 10);
-		strcat_P(tmp_buffer, PSTR(","));
-		itoa(os.nvdata.et_run_today[1], tmp_buffer+strlen(tmp_buffer), 10);
+		itoa((os.nvdata.water_balance[1]-(os.nvdata.et_run_today[1]+os.nvdata.predicted_rain)), tmp_buffer+strlen(tmp_buffer), 10);
 		break;
-		
     }
   }
   strcat_P(tmp_buffer, PSTR(","));
