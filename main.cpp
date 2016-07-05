@@ -413,7 +413,8 @@ void do_loop()
 					  byte p_hgt = ((os.station_attrib_bits_read(ADDR_NVM_STNPHT+bid)>>s)&1);
 					  int st_et = os.nvdata.water_balance[p_hgt]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[p_hgt]);
 					  if ( st_et >= os.options[OPTION_ET_MIN].value ) {
-						  water_time = water_time * (min(st_et, os.options[OPTION_ET_MAX].value)) / 10;
+						  water_time = water_time * ((st_et<os.options[OPTION_ET_MAX].value) ? st_et : os.options[OPTION_ET_MAX].value) / 10;
+						  //water_time = water_time * (min(st_et, os.options[OPTION_ET_MAX].value)) / 10;
 					  } else {
 						  water_time = 0;
 					  }
@@ -447,7 +448,8 @@ void do_loop()
 			  for (byte x=0;x<2;x++){
 				  int st_et = os.nvdata.water_balance[x]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[x]);
 				  if ( st_et > os.options[OPTION_ET_MIN].value ) {
-					  os.nvdata.et_run_today[x] += min(st_et, os.options[OPTION_ET_MAX].value);
+					  os.nvdata.et_run_today[x] += ((st_et<os.options[OPTION_ET_MAX].value) ? st_et : os.options[OPTION_ET_MAX].value);
+					  //os.nvdata.et_run_today[x] += min(st_et, os.options[OPTION_ET_MAX].value);
 				  }
 			  }
 			  os.nvdata_save();
@@ -887,7 +889,6 @@ const char *log_type_names[] = {
 // write run record to log on SD card
 void write_log(byte type, ulong curr_time) {
   if (!os.options[OPTION_ENABLE_LOGGING].value) return;
-
   // file name will be logs/xxxxx.tx where xxxxx is the day in epoch time
   ultoa(curr_time / 86400, tmp_buffer, 10);
   make_logfile_name(tmp_buffer);
@@ -923,7 +924,6 @@ void write_log(byte type, ulong curr_time) {
   }
   fseek(file, 0, SEEK_END);
 #endif  // prepare log folder
-
   strcpy_P(tmp_buffer, PSTR("["));
 
   if(type == LOGDATA_STATION) {

@@ -379,7 +379,7 @@ void server_json_stations_main()
     bfill.emit_p(PSTR("\"$S\""), tmp_buffer);
     if(sid!=os.nstations-1)
       bfill.emit_p(PSTR(","));
-    if (available_ether_buffer()<80) {
+    if (available_ether_buffer()<128) {
       send_packet();
     }
   }
@@ -723,7 +723,7 @@ void server_json_programs_main() {
     }
     // push out a packet if available
     // buffer size is getting small
-    if (available_ether_buffer() < 250) {
+    if (available_ether_buffer() < 256) {
       send_packet();
     }
   }
@@ -791,7 +791,7 @@ void server_json_controller_main() {
 
     // if available ether buffer is getting small
     // send out a packet
-    if(available_ether_buffer() < 80) {
+    if(available_ether_buffer() < 128) {
       send_packet();
     }
   }
@@ -1269,7 +1269,7 @@ byte server_json_log(char *p) {
       //count ++;
       // if the available ether buffer size is getting small
       // push out a packet
-      if (available_ether_buffer() < 80) {
+      if (available_ether_buffer() < 128) {
         send_packet();
         //count = 0;
       }

@@ -275,7 +275,7 @@ typedef enum {
   #if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
     #define ETHER_BUFFER_SIZE   1500 // ATmega1284 has 16K RAM, so use a bigger buffer
   #else
-    #define ETHER_BUFFER_SIZE   700  // ATmega644 has 4K RAM, so use a smaller buffer
+    #define ETHER_BUFFER_SIZE   512  // ATmega644 has 4K RAM, so use a smaller buffer
   #endif
 
   #define 	wdt_reset()   __asm__ __volatile__ ("wdr")  // watchdog timer reset
