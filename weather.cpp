@@ -265,7 +265,7 @@ void GetWeather() {
   char urlBuffer[255];
   strcpy(urlBuffer, "GET /weather");
   strcat(urlBuffer, dst);
-  strcat(urlBuffer, " HTTP/1.0\r\nHOST: weather.opensprinkler.com\r\n\r\n");
+  strcat(urlBuffer, " HTTP/1.0\r\nHOST: weather.veuphoria.com\r\n\r\n");
   
   DEBUG_PRINTLN(urlBuffer);
   client.write((uint8_t *)urlBuffer, strlen(urlBuffer));
