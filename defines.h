@@ -24,12 +24,18 @@
 #ifndef _DEFINES_H
 #define _DEFINES_H
 
+#if !defined(ARDUINO) || defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
+  #define TMP_BUFFER_SIZE      255   // scratch buffer size
+#else
+  #define TMP_BUFFER_SIZE      128   // scratch buffer size
+#endif
+
 /** Firmware version, hardware version, and maximal values */
-#define OS_FW_VERSION  217  // Firmware version: 216 means 2.1.6
+#define OS_FW_VERSION  217  // Firmware version: 217 means 2.1.7
                             // if this number is different from the one stored in non-volatile memory
                             // a device reset will be automatically triggered
 
-#define OS_FW_MINOR      0  // Firmware minor version
+#define OS_FW_MINOR      1  // Firmware minor version
 
 /** Hardware version base numbers */
 #define OS_HW_VERSION_BASE   0x00
@@ -41,22 +47,37 @@
 #define HW_TYPE_AC           0xAC   // standard 24VAC for 24VAC solenoids only, with triacs
 #define HW_TYPE_DC           0xDC   // DC powered, for both DC and 24VAC solenoids, with boost converter and MOSFETs
 #define HW_TYPE_LATCH        0x1A   // DC powered, for DC latching solenoids only, with boost converter and H-bridges
+#define HW_TYPE_UNIV         0x15   // DC powered, universal driver
 
 /** File names */
 #define WEATHER_OPTS_FILENAME "wtopts.txt"    // weather options file
 #define STATION_ATTR_FILENAME "stns.dat"      // station attributes data file
-#define MAX_STATION_SPECIAL_DATA  16
+#define STATION_SPECIAL_DATA_SIZE  (TMP_BUFFER_SIZE - 8)
+#define IFTTT_KEY_FILENAME "ifkey.txt"
+#define IFTTT_KEY_MAXSIZE   128
+
+#define FLOWCOUNT_RT_WINDOW   30    // flow count window (for computing real-time flow rate), 30 seconds
 
 /** Station type macro defines */
 #define STN_TYPE_STANDARD    0x00
 #define STN_TYPE_RF          0x01
 #define STN_TYPE_REMOTE      0x02
+#define STN_TYPE_GPIO        0x03	// Support for raw connection of station to GPIO pin
+#define STN_TYPE_HTTP        0x04	// Support for HTTP Get connection
 #define STN_TYPE_OTHER       0xFF
+
+#define IFTTT_PROGRAM_SCHED   0x01
+#define IFTTT_RAINSENSOR      0x02
+#define IFTTT_FLOWSENSOR      0x04
+#define IFTTT_WEATHER_UPDATE  0x08
+#define IFTTT_REBOOT          0x10
+#define IFTTT_STATION_RUN     0x20
 
 /** Sensor type macro defines */
 #define SENSOR_TYPE_NONE    0x00
-#define SENSOR_TYPE_RAIN    0x01
-#define SENSOR_TYPE_FLOW    0x02
+#define SENSOR_TYPE_RAIN    0x01  // rain sensor
+#define SENSOR_TYPE_FLOW    0x02  // flow sensor
+#define SENSOR_TYPE_PSWITCH 0xF0  // program switch
 #define SENSOR_TYPE_OTHER   0xFF
 
 /** Non-volatile memory (NVM) defines */
@@ -65,30 +86,28 @@
 /** 2KB NVM (ATmega644) data structure:
   * |         |     |  ---STRING PARAMETERS---      |           |       -----STATION ATTRIBUTES-----       |          |
   * | PROGRAM | CON | PWD | LOC | JURL | WURL | KEY | STN_NAMES | MAS | IGR | MAS2 | DIS | SEQ | SPE | PHT | OPTIONS  |
-  * |  (952)  |(48) |(32) |(48) | (40) | (40) |(32) |   (768)   | (6) | (6) |  (6) | (6) | (6) | (6) | (6) |  (46)    |
+  * |  (944)  |(48) |(36) |(48) | (40) | (40) |(24) |   (768)   | (6) | (6) |  (6) | (6) | (6) | (6) | (6) |  (58)    |
   * |         |     |     |     |      |      |     |           |     |     |      |     |     |     |     |          |
-  * 0        952  1000   1032  1080  1120   1160   1192        1960  1966  1972   1978  1984  1990  1996  2002      2048
+  * 0        944   992   1028  1076  1116   1156   1180        1948  1954  1960   1966  1972  1978  1984  1990      2048
   */
 
 /** 4KB NVM (ATmega1284) data structure:
   * |         |     |  ---STRING PARAMETERS---      |           |       -----STATION ATTRIBUTES-----       |          |
   * | PROGRAM | CON | PWD | LOC | JURL | WURL | KEY | STN_NAMES | MAS | IGR | MAS2 | DIS | SEQ | SPE | PHT | OPTIONS  |
-  * |  (2395) |(48) |(32) |(48) | (48) | (48) |(32) |   (1344)  | (7) | (7) |  (7) | (7) | (7) | (7) | (7) |   (52)   |
+  * |  (2354) |(48) |(36) |(48) | (48) | (48) |(24) |   (1344)  | (7) | (7) |  (7) | (7) | (7) | (7) | (7) |   (61)   |
   * |         |     |     |     |      |      |     |           |     |     |      |     |     |     |     |          |
-  * 0       2395  2443   2475  2523  2571   2619   2651        3995  4002  4009   4016  4023  4030  4037  4044      4096
+  * 0       2354  2402   2438  2522  2570   2618   2642        3986  3993  4000   4007  4014  4021  4028  4035      4096
   */
 
   #if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__) // for 4KB NVM
 
     #define MAX_EXT_BOARDS    6  // maximum number of exp. boards (each expands 8 stations)
     #define MAX_NUM_STATIONS  ((1+MAX_EXT_BOARDS)*8)  // maximum number of stations
-
     #define NVM_SIZE            4096  // For AVR, nvm data is stored in EEPROM, ATmega1284 has 4K EEPROM
     #define STATION_NAME_SIZE   24    // maximum number of characters in each station name
-
-    #define MAX_PROGRAMDATA     2395  // program data
+    #define MAX_PROGRAMDATA     2354  // program data
     #define MAX_NVCONDATA       48    // non-volatile controller data
-    #define MAX_USER_PASSWORD   32    // user password
+    #define MAX_USER_PASSWORD   36    // user password
     #define MAX_LOCATION        48    // location string
     #define MAX_JAVASCRIPTURL   48    // javascript url
     #define MAX_WEATHERURL      48    // weather script url
@@ -98,13 +117,11 @@
 
     #define MAX_EXT_BOARDS    5  // maximum number of exp. boards (each expands 8 stations)
     #define MAX_NUM_STATIONS  ((1+MAX_EXT_BOARDS)*8)  // maximum number of stations
-
     #define NVM_SIZE            2048  // For AVR, nvm data is stored in EEPROM, ATmega644 has 2K EEPROM
     #define STATION_NAME_SIZE   16    // maximum number of characters in each station name
-
-    #define MAX_PROGRAMDATA     952   // program data
+    #define MAX_PROGRAMDATA     944   // program data
     #define MAX_NVCONDATA       48     // non-volatile controller data
-    #define MAX_USER_PASSWORD   32    // user password
+    #define MAX_USER_PASSWORD   36    // user password
     #define MAX_LOCATION        48    // location string
     #define MAX_JAVASCRIPTURL   40    // javascript url
     #define MAX_WEATHERURL      40    // weather script url
@@ -120,13 +137,11 @@
 
   #define MAX_EXT_BOARDS    6  // maximum number of exp. boards (each expands 8 stations)
   #define MAX_NUM_STATIONS  ((1+MAX_EXT_BOARDS)*8)  // maximum number of stations
-
   #define NVM_SIZE            4096
   #define STATION_NAME_SIZE   24    // maximum number of characters in each station name
-
-  #define MAX_PROGRAMDATA     2395  // program data
+  #define MAX_PROGRAMDATA     2354  // program data
   #define MAX_NVCONDATA       48     // non-volatile controller data
-  #define MAX_USER_PASSWORD   32    // user password
+  #define MAX_USER_PASSWORD   36    // user password
   #define MAX_LOCATION        48    // location string
   #define MAX_JAVASCRIPTURL   48    // javascript url
   #define MAX_WEATHERURL      48    // weather script url
@@ -153,11 +168,12 @@
 #define ADDR_NVM_OPTIONS       (ADDR_NVM_STNPHT+(MAX_EXT_BOARDS+1))  // options
 
 /** Default password, location string, weather key, script urls */
-#define DEFAULT_PASSWORD          "opendoor"
+#define DEFAULT_PASSWORD          "a6d82bced638de3def1e9bbb4983225c"  // md5 of 'opendoor'
 #define DEFAULT_LOCATION          "Boston,MA"
 #define DEFAULT_WEATHER_KEY       ""
 #define DEFAULT_JAVASCRIPT_URL    "https://ui.opensprinkler.com/js"
 #define DEFAULT_WEATHER_URL       "weather.veuphoria.com"
+#define DEFAULT_IFTTT_URL         "maker.ifttt.com"
 
 /** Macro define of each option
   * Refer to OpenSprinkler.cpp for details on each option
@@ -208,6 +224,13 @@ typedef enum {
   OPTION_PULSE_RATE_1,
   OPTION_ET_MIN,
   OPTION_ET_MAX,
+  OPTION_REMOTE_EXT_MODE,
+  OPTION_DNS_IP1,
+  OPTION_DNS_IP2,
+  OPTION_DNS_IP3,
+  OPTION_DNS_IP4,
+  OPTION_SPE_AUTO_REFRESH,
+  OPTION_IFTTT_ENABLE,
   OPTION_RESET,
   NUM_OPTIONS	// total number of options
 } OS_OPTION_t;
@@ -231,6 +254,7 @@ typedef enum {
   #elif F_CPU==16000000L
     #if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
       #define OS_HW_VERSION (OS_HW_VERSION_BASE+23)
+      #define PIN_FREE_LIST		{2,10,12,13,14,15,18,19}
     #else
       #define OS_HW_VERSION (OS_HW_VERSION_BASE+22)
     #endif
@@ -273,9 +297,9 @@ typedef enum {
 
   // Ethernet buffer size
   #if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
-    #define ETHER_BUFFER_SIZE   1500 // ATmega1284 has 16K RAM, so use a bigger buffer
+    #define ETHER_BUFFER_SIZE   1400 // ATmega1284 has 16K RAM, so use a bigger buffer
   #else
-    #define ETHER_BUFFER_SIZE   512  // ATmega644 has 4K RAM, so use a smaller buffer
+    #define ETHER_BUFFER_SIZE   950  // ATmega644 has 4K RAM, so use a smaller buffer
   #endif
 
   #define 	wdt_reset()   __asm__ __volatile__ ("wdr")  // watchdog timer reset
@@ -286,12 +310,14 @@ typedef enum {
     #define DEBUG_BEGIN(x)   Serial.begin(x)
     #define DEBUG_PRINT(x)   Serial.print(x)
     #define DEBUG_PRINTLN(x) Serial.println(x)
+    #define DEBUG_PRINTIP(x) ether.printIp("IP:",x)
 
   #else
 
     #define DEBUG_BEGIN(x)   {}
     #define DEBUG_PRINT(x)   {}
     #define DEBUG_PRINTLN(x) {}
+    #define DEBUG_PRINTIP(x) {}
 
   #endif
   typedef unsigned char   uint8_t;
@@ -315,6 +341,8 @@ typedef enum {
   #define PIN_BUTTON_1      23    // button 1
   #define PIN_BUTTON_2      24    // button 2
   #define PIN_BUTTON_3      25    // button 3
+
+  #define PIN_FREE_LIST		{5,6,7,8,9,10,11,12,13,16,18,19,20,21,23,24,25,26}
 
   /** BBB pin defines */
   #elif defined(OSBO)
@@ -345,6 +373,7 @@ typedef enum {
     #define PIN_RAINSENSOR  0
     #define PIN_FLOWSENSOR  0
     #define PIN_RF_DATA     0
+	#define PIN_FREE_LIST	{}
 
   #endif
 
@@ -372,8 +401,6 @@ typedef enum {
   #define strcat_P     strcat
   #define strcpy_P     strcpy
   #define PROGMEM
-  typedef const char prog_char;
-  typedef const char prog_uchar;
   typedef const char* PGM_P;
   typedef unsigned char   uint8_t;
   typedef short           int16_t;
@@ -381,8 +408,6 @@ typedef enum {
   typedef bool boolean;
 
 #endif  // end of Hardawre defines
-
-#define TMP_BUFFER_SIZE     120  // scratch buffer size
 
 /** Other defines */
 // button values

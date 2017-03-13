@@ -26,29 +26,41 @@
 #include "OpenSprinkler.h"
 #include "program.h"
 #include "weather.h"
+#include "server.h"
 
 #if defined(ARDUINO)
+
 #include "SdFat.h"
 #include "Wire.h"
 byte Ethernet::buffer[ETHER_BUFFER_SIZE]; // Ethernet packet buffer
 SdFat sd;                                 // SD card object
 
-void reset_all_stations();
 unsigned long getNtpTime();
-void manual_start_program(byte pid);
+
 #else // header and defs for RPI/BBB
+
 #include <sys/stat.h>
+#include <netdb.h>
 #include "etherport.h"
-#include "server.h"
+#include "gpio.h"
+
 char ether_buffer[ETHER_BUFFER_SIZE];
 EthernetServer *m_server = 0;
 EthernetClient *m_client = 0;
+
 #endif
 
-// Some perturbations have been added to the timing values below
-// to avoid two events happening too clost to each other
-// This is because Arduino is not good at handling multiple
-// web requests at the same time
+
+void reset_all_stations();
+void reset_all_stations_immediate();
+void push_message(byte type, uint32_t lval=0, float fval=0.f, const char* sval=NULL);
+void manual_start_program(byte, byte);
+void httpget_callback(byte, uint16_t, uint16_t);
+
+
+// Small variations have been added to the timing values below
+// to minimize conflicting events
+
 #define NTP_SYNC_INTERVAL       86403L  // NYP sync interval, 24 hrs
 #define RTC_SYNC_INTERVAL       60      // RTC sync interval, 60 secs
 #define CHECK_NETWORK_INTERVAL  601     // Network checking timeout, 10 minutes
@@ -64,6 +76,34 @@ BufferFiller bfill;                       // buffer filler
 // ====== Object defines ======
 OpenSprinkler os; // OpenSprinkler object
 ProgramData pd;   // ProgramdData object
+
+/* ====== Robert Hillman (RAH)'s implementation of flow sensor ======
+ * flow_begin - time when valve turns on
+ * flow_start - time when flow starts being measured (i.e. 2 mins after flow_begin approx
+ * flow_stop - time when valve turns off (last rising edge pulse detected before off)
+ * flow_gallons - total # of gallons+1 from flow_start to flow_stop
+ * flow_last_gpm - last flow rate measured (averaged over flow_gallons) from last valve stopped (used to write to log file). */
+ulong flow_begin, flow_start, flow_stop, flow_gallons;
+float flow_last_gpm=0;
+
+volatile ulong flow_count = 0;
+/** Flow sensor interrupt service routine */
+void flow_isr() {
+  if(os.options[OPTION_SENSOR_TYPE]!=SENSOR_TYPE_FLOW) return;
+  ulong curr = millis();
+
+  if(curr-os.flowcount_time_ms < 50) return;  // debounce threshold: 50ms
+  flow_count++;
+  os.flowcount_time_ms = curr;
+
+  /* RAH implementation of flow sensor */
+  if (flow_start==0) { flow_gallons=0; flow_start=curr;}  // if first pulse, record time
+  if ((curr-flow_start)<90000) { flow_gallons=0; } // wait 90 seconds before recording flow_begin
+  else {  if (flow_gallons==1)  {  flow_begin = curr;}}
+  flow_stop = curr; // get time in ms for stop
+  flow_gallons++;  // increment gallon count for each interrupt
+  /* End of RAH implementation of flow sensor */
+}
 
 #if defined(ARDUINO)
 
@@ -101,7 +141,7 @@ void ui_state_machine() {
     case BUTTON_1:
       if (button & BUTTON_FLAG_HOLD) {  // holding B1: stop all stations
         if (digitalRead(PIN_BUTTON_3)==0) { // if B3 is pressed while holding B1, run a short test (internal test)
-          manual_start_program(255);
+          manual_start_program(255, 0);
         } else if (digitalRead(PIN_BUTTON_2)==0) { // if B2 is pressed while holding B1, display gateway IP
           os.lcd_print_ip(ether.gwip, 0);
           os.lcd.setCursor(0, 1);
@@ -160,7 +200,7 @@ void ui_state_machine() {
     if ((button & BUTTON_MASK)==BUTTON_3) {
       if (button & BUTTON_FLAG_HOLD) {
         // start
-        manual_start_program(ui_state_runprog);
+        manual_start_program(ui_state_runprog, 0);
         ui_state = UI_STATE_DEFAULT;
       } else {
         ui_state_runprog = (ui_state_runprog+1) % (pd.nprograms+1);
@@ -353,23 +393,40 @@ void do_loop()
       if (os.status.rain_delayed) {
         // rain delay started, record time
         os.raindelay_start_time = curr_time;
+        push_message(IFTTT_RAINSENSOR, LOGDATA_RAINDELAY, 1);
       } else {
         // rain delay stopped, write log
         write_log(LOGDATA_RAINDELAY, curr_time);
+        push_message(IFTTT_RAINSENSOR, LOGDATA_RAINDELAY, 0);
       }
       os.old_status.rain_delayed = os.status.rain_delayed;
     }
     // ====== Check rain sensor status ======
-    os.rainsensor_status();
-    if (os.old_status.rain_sensed != os.status.rain_sensed) {
-      if (os.status.rain_sensed) {
-        // rain sensor on, record time
-        os.sensor_lasttime = curr_time;
-      } else {
-        // rain sensor off, write log
-        write_log(LOGDATA_RAINSENSE, curr_time);
+    if (os.options[OPTION_SENSOR_TYPE] == SENSOR_TYPE_RAIN) { // if a rain sensor is connected
+      os.rainsensor_status();
+      if (os.old_status.rain_sensed != os.status.rain_sensed) {
+        if (os.status.rain_sensed) {
+          // rain sensor on, record time
+          os.sensor_lasttime = curr_time;
+          push_message(IFTTT_RAINSENSOR, LOGDATA_RAINSENSE, 1);
+        } else {
+          // rain sensor off, write log
+          if (curr_time>os.sensor_lasttime+10) {  // add a 10 second threshold
+                                                  // to avoid faulty rain sensors generating
+                                                  // too many log records
+            write_log(LOGDATA_RAINSENSE, curr_time);
+            push_message(IFTTT_RAINSENSOR, LOGDATA_RAINSENSE, 0);
+          }
+        }
+        os.old_status.rain_sensed = os.status.rain_sensed;
       }
       os.old_status.rain_sensed = os.status.rain_sensed;
+    }
+
+    // ===== Check program switch status =====
+    if (os.programswitch_status(curr_time)) {
+      reset_all_stations_immediate(); // immediately stop all stations
+      if(pd.nprograms > 0)  manual_start_program(1, 0);
     }
 
     // ====== Schedule program data ======
@@ -406,14 +463,14 @@ void do_loop()
             // if station has non-zero water time and the station is not disabled
             if (prog.durations[sid] && !(os.station_attrib_bits_read(ADDR_NVM_STNDISABLE+bid)&(1<<s))) {
               // water time is scaled by watering percentage
-              ulong water_time = water_time_resolve(water_time_decode(prog.durations[sid]));
+              ulong water_time = water_time_resolve(prog.durations[sid]);
               // if the program is set to use weather scaling
               if (prog.use_weather) {
 				  if (prog.use_et) {
 					  byte p_hgt = ((os.station_attrib_bits_read(ADDR_NVM_STNPHT+bid)>>s)&1);
 					  int st_et = os.nvdata.water_balance[p_hgt]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[p_hgt]);
 					  if ( st_et >= os.options[OPTION_ET_MIN].value ) {
-						  water_time = water_time * ((st_et<os.options[OPTION_ET_MAX].value) ? st_et : os.options[OPTION_ET_MAX].value) / 10;
+						  water_time = water_time * ((st_et<os.options[OPTION_ET_MAX]) ? st_et : os.options[OPTION_ET_MAX]) / 10;
 						  //water_time = water_time * (min(st_et, os.options[OPTION_ET_MAX].value)) / 10;
 					  } else {
 						  water_time = 0;
@@ -454,6 +511,8 @@ void do_loop()
 			  }
 			  os.nvdata_save();
 		  }//if use_et
+          if(match_found && (prog.use_weather && !prog.use_et)) push_message(IFTTT_PROGRAM_SCHED, pid, os.options[OPTION_WATER_PERCENTAGE]);
+		  if(match_found && prog.use_et) push_message(IFTTT_PROGRAM_SCHED, pid, os.nvdata.water_balance[0]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[0], "et");
         }// if check_match
       }// for pid
 
@@ -513,13 +572,9 @@ void do_loop()
             if (curr_time >= q->st && curr_time < q->st+q->dur) {
               os.set_station_bit(sid, 1);
 
-              // fix me
-              // upon turning on station, process RF
-              // if the station is a RF station
-              if(os.station_attrib_bits_read(ADDR_NVM_STNSPE+bid)&(1<<s)) {
-                // send RF on signal
-                os.send_rfstation_signal(sid, true);
-              }
+              // RAH implementation of flow sensor
+              flow_start=0;
+
             } //if curr_time > scheduled_start_time
           } // if current station is not running
         }//end_s
@@ -566,6 +621,11 @@ void do_loop()
         pd.reset_runtime();
         // reset program busy bit
         os.status.program_busy = 0;
+        // log flow sensor reading if flow sensor is used
+        if(os.options[OPTION_SENSOR_TYPE]==SENSOR_TYPE_FLOW) {
+          write_log(LOGDATA_FLOWSENSE, curr_time);
+          push_message(IFTTT_FLOWSENSOR, (flow_count>os.flowcount_log_start)?(flow_count-os.flowcount_log_start):0);
+        }
 
         // in case some options have changed while executing the program
         os.status.mas = os.options[OPTION_MASTER_STATION].value; // update master station
@@ -575,8 +635,8 @@ void do_loop()
 
     // handle master
     if (os.status.mas>0) {
-      byte mas_on_adj = os.options[OPTION_MASTER_ON_ADJ].value;
-      byte mas_off_adj= os.options[OPTION_MASTER_OFF_ADJ].value;
+      int16_t mas_on_adj = water_time_decode_signed(os.options[OPTION_MASTER_ON_ADJ]);
+      int16_t mas_off_adj= water_time_decode_signed(os.options[OPTION_MASTER_OFF_ADJ]);
       byte masbit = 0;
       os.station_attrib_bits_load(ADDR_NVM_MAS_OP, (byte*)tmp_buffer);  // tmp_buffer now stores masop_bits
       for(sid=0;sid<os.nstations;sid++) {
@@ -589,7 +649,7 @@ void do_loop()
           q=pd.queue+pd.station_qid[sid];
           // check if timing is within the acceptable range
           if (curr_time >= q->st + mas_on_adj &&
-              curr_time <= q->st + q->dur + mas_off_adj - 60) {
+              curr_time <= q->st + q->dur + mas_off_adj) {
             masbit = 1;
             break;
           }
@@ -599,8 +659,8 @@ void do_loop()
     }
     // handle master2
     if (os.status.mas2>0) {
-      byte mas_on_adj_2 = os.options[OPTION_MASTER_ON_ADJ_2].value;
-      byte mas_off_adj_2= os.options[OPTION_MASTER_OFF_ADJ_2].value;
+      int16_t mas_on_adj_2 = water_time_decode_signed(os.options[OPTION_MASTER_ON_ADJ_2]);
+      int16_t mas_off_adj_2= water_time_decode_signed(os.options[OPTION_MASTER_OFF_ADJ_2]);
       byte masbit2 = 0;
       os.station_attrib_bits_load(ADDR_NVM_MAS_OP_2, (byte*)tmp_buffer);  // tmp_buffer now stores masop2_bits
       for(sid=0;sid<os.nstations;sid++) {
@@ -613,7 +673,7 @@ void do_loop()
           q=pd.queue+pd.station_qid[sid];
           // check if timing is within the acceptable range
           if (curr_time >= q->st + mas_on_adj_2 &&
-              curr_time <= q->st + q->dur + mas_off_adj_2 - 60) {
+              curr_time <= q->st + q->dur + mas_off_adj_2) {
             masbit2 = 1;
             break;
           }
@@ -666,6 +726,23 @@ void do_loop()
     // check weather
     check_weather();
 
+    byte wuf = os.weather_update_flag;
+    if(wuf) {
+      if((wuf&WEATHER_UPDATE_EIP) | (wuf&WEATHER_UPDATE_WL) | (wuf&WEATHER_UPDATE_ET0) | (wuf&WEATHER_UPDATE_ET1)) {
+        // at the moment, we only send notification if water level or external IP changed
+        // the other changes, such as sunrise, sunset changes are ignored for notification
+        push_message(IFTTT_WEATHER_UPDATE, (wuf&WEATHER_UPDATE_EIP)?os.nvdata.external_ip:0,
+                                         (wuf&WEATHER_UPDATE_WL)?os.options[OPTION_WATER_PERCENTAGE]:-1),
+										 ((wuf&WEATHER_UPDATE_ET0)||(wuf&WEATHER_UPDATE_ET1))?itoa((int)(os.nvdata.water_balance[0]-(os.nvdata.predicted_rain+os.nvdata.et_run_today[0]))):"unk";
+      }
+      os.weather_update_flag = 0;
+    }
+    static byte reboot_notification = 1;
+    if(reboot_notification) {
+      reboot_notification = 0;
+      push_message(IFTTT_REBOOT);
+    }
+
   }
 
   #if !defined(ARDUINO)
@@ -674,8 +751,10 @@ void do_loop()
 }
 
 void check_weather() {
-  // do not check weather if the Use Weather option is disabled, or if network is not available, or if a program is running
-  if (os.status.network_fails>0 || os.status.program_busy) return;
+  // do not check weather if
+  // - network check has failed, or
+  // - the controller is in remote extension mode
+  if (os.status.network_fails>0 || os.options[OPTION_REMOTE_EXT_MODE]) return;
 
   ulong ntz = os.now_tz();
   if (os.checkwt_success_lasttime && (ntz > os.checkwt_success_lasttime + CHECK_WEATHER_SUCCESS_TIMEOUT)) {
@@ -700,6 +779,10 @@ void turn_off_station(byte sid, ulong curr_time) {
   // ignore if we are turning off a station that's not running or scheduled to run
   if (qid>=pd.nqueue)  return;
 
+  // RAH implementation of flow sensor
+  if (flow_gallons>1) {flow_last_gpm = (float) 60000/(float)((flow_stop-flow_begin)/(flow_gallons-1));  }// RAH calculate GPM, 1 pulse per gallon
+  else {flow_last_gpm = 0;}  // RAH if not one gallon (two pulses) measured then record 0 gpm
+
   RuntimeQueueStruct *q = pd.queue+qid;
 
   // check if the current time is past the scheduled start time,
@@ -712,6 +795,7 @@ void turn_off_station(byte sid, ulong curr_time) {
       pd.lastrun.duration = curr_time - q->st;
       pd.lastrun.endtime = curr_time;
       write_log(LOGDATA_STATION, curr_time);
+      push_message(IFTTT_STATION_RUN, sid, pd.lastrun.duration);
     }
 
     // upon turning off station, process RF station
@@ -824,11 +908,12 @@ void reset_all_stations() {
 }
 
 
-// Manually start a program
-// If pid==0, this is a test program (1 minute per station)
-// If pid==255, this is a short test program (2 second per station)
-// If pid > 0. run program pid-1
-void manual_start_program(byte pid) {
+/** Manually start a program
+ * If pid==0, this is a test program (1 minute per station)
+ * If pid==255, this is a short test program (2 second per station)
+ * If pid > 0. run program pid-1
+ */
+void manual_start_program(byte pid, byte uwt) {
   boolean match_found = false;
   reset_all_stations_immediate();
   ProgramStruct prog;
@@ -836,26 +921,223 @@ void manual_start_program(byte pid) {
   byte sid, bid, s;
   if ((pid>0)&&(pid<255)) {
     pd.read(pid-1, &prog);
+    push_message(IFTTT_PROGRAM_SCHED, pid-1, uwt?os.options[OPTION_WATER_PERCENTAGE]:100, "mm");
   }
   for(sid=0;sid<os.nstations;sid++) {
     bid=sid>>3;
     s=sid&0x07;
+    // skip if the station is a master station (because master cannot be scheduled independently
+    if ((os.status.mas==sid+1) || (os.status.mas2==sid+1))
+      continue;    
     dur = 60;
     if(pid==255)  dur=2;
     else if(pid>0)
-      dur = water_time_resolve(water_time_decode(prog.durations[sid]));
-    RuntimeQueueStruct *q = pd.enqueue();
-    if (q && dur>0 && !(os.station_attrib_bits_read(ADDR_NVM_STNDISABLE+bid)&(1<<s))) {
-      q->st = 0;
-      q->dur = dur;
-      q->sid = sid;
-      q->pid = 254;
-      match_found = true;
+      dur = water_time_resolve(prog.durations[sid]);
+    if(uwt) {
+      dur = dur * os.options[OPTION_WATER_PERCENTAGE] / 100;
+    }
+    if(dur>0 && !(os.station_attrib_bits_read(ADDR_NVM_STNDISABLE+bid)&(1<<s))) {
+      RuntimeQueueStruct *q = pd.enqueue();
+      if (q) {
+        q->st = 0;
+        q->dur = dur;
+        q->sid = sid;
+        q->pid = 254;
+        match_found = true;
+      }
     }
   }
   if(match_found) {
     schedule_all_stations(os.now_tz());
   }
+}
+
+// ==========================================
+// ====== PUSH NOTIFICATION FUNCTIONS =======
+// ==========================================
+void ip2string(char* str, byte ip[4]) {
+  for(byte i=0;i<4;i++) {
+    itoa(ip[i], str+strlen(str), 10);
+    if(i!=3) strcat(str, ".");
+  }
+}
+
+void push_message(byte type, uint32_t lval, float fval, const char* sval) {
+
+#if !defined(ARDUINO) || defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
+
+  static const char* server = DEFAULT_IFTTT_URL;
+  static char key[IFTTT_KEY_MAXSIZE];
+  static char postval[TMP_BUFFER_SIZE];
+
+  // check if this type of event is enabled for push notification
+  if((os.options[OPTION_IFTTT_ENABLE]&type) == 0) return;
+  key[0] = 0;
+  read_from_file(ifkey_filename, key);
+  key[IFTTT_KEY_MAXSIZE-1]=0;
+
+  if(strlen(key)==0) return;
+
+  #if defined(ARDUINO)
+    uint16_t _port = ether.hisport; // make a copy of the original port
+    ether.hisport = 80;
+  #endif
+
+  strcpy_P(postval, PSTR("{\"value1\":\""));
+
+  switch(type) {
+
+    case IFTTT_STATION_RUN:
+      
+      strcat_P(postval, PSTR("Station "));
+      os.get_station_name(lval, postval+strlen(postval));
+      strcat_P(postval, PSTR(" closed. It ran for "));
+      itoa((int)fval/60, postval+strlen(postval), 10);
+      strcat_P(postval, PSTR(" minutes "));
+      itoa((int)fval%60, postval+strlen(postval), 10);
+      strcat_P(postval, PSTR(" seconds."));
+      if(os.options[OPTION_SENSOR_TYPE]==SENSOR_TYPE_FLOW) {
+        strcat_P(postval, PSTR(" Flow rate: "));
+        #if defined(ARDUINO)
+        dtostrf(flow_last_gpm,5,2,postval+strlen(postval));
+        #else
+        sprintf(tmp_buffer+strlen(tmp_buffer), "%5.2f", flow_last_gpm);
+        #endif
+      }
+      break;
+
+    case IFTTT_PROGRAM_SCHED:
+
+      if(sval=="mm") strcat_P(postval, PSTR("Manually scheduled "));
+      else strcat_P(postval, PSTR("Automatically scheduled "));
+      strcat_P(postval, PSTR("Program "));
+      {
+        ProgramStruct prog;
+        pd.read(lval, &prog);
+        if(lval<pd.nprograms) strcat(postval, prog.name);
+      }
+      strcat_P(postval, PSTR(" with "));
+      itoa((int)fval, postval+strlen(postval), 10);
+	  if(sval=="et") strcat_P(postval, PSTR("mm water balance.");
+	  else strcat_P(postval, PSTR("% water level."));
+      break;
+
+    case IFTTT_RAINSENSOR:
+
+      strcat_P(postval, (lval==LOGDATA_RAINDELAY) ? PSTR("Rain delay ") : PSTR("Rain sensor "));
+      strcat_P(postval, ((int)fval)?PSTR("activated."):PSTR("de-activated"));
+      break;
+
+    case IFTTT_FLOWSENSOR:
+      strcat_P(postval, PSTR("Flow count: "));
+      itoa(lval, postval+strlen(postval), 10);
+      strcat_P(postval, PSTR(", volume: "));
+      {
+      uint32_t volume = os.options[OPTION_PULSE_RATE_1];
+      volume = (volume<<8)+os.options[OPTION_PULSE_RATE_0];
+      volume = lval*volume;
+      itoa(volume/100, postval+strlen(postval), 10);
+      strcat(postval, ".");
+      itoa(volume%100, postval+strlen(postval), 10);
+      }
+      break;
+
+    case IFTTT_WEATHER_UPDATE:
+      if(lval>0) {
+        strcat_P(postval, PSTR("External IP updated: "));
+        byte ip[4] = {(lval>>24)&0xFF,(lval>>16)&0xFF,(lval>>8)&0xFF,lval&0xFF};
+        ip2string(postval, ip);
+      }
+      if(fval>=0) {
+        strcat_P(postval, PSTR("Water level updated: "));
+        itoa((int)fval, postval+strlen(postval), 10);
+        strcat_P(postval, PSTR("%."));
+      }
+	  if(sval!="unk") {
+		  strcat_P(postval, PSTR("Water balance updated: "));
+		  wb = atoi(sval);
+		  itoa(wb/10, postval+strlen(postval), 10);
+		  strcat(postval, ".");
+		  itoa(wb%10, postval+strlen(postval), 10);
+		  strcat_P(postval, PSTR("mm.");
+	  } 
+      break;
+
+    case IFTTT_REBOOT:
+      #if defined(ARDUINO)
+        strcat_P(postval, PSTR("Rebooted. Device IP: "));
+        ip2string(postval, ether.myip);
+        strcat(postval, ":");
+        itoa(_port, postval+strlen(postval), 10);
+      #else
+        strcat_P(postval, PSTR("Process restarted."));
+      #endif
+      break;
+  }
+
+  strcat_P(postval, PSTR("\"}"));
+
+  DEBUG_PRINTLN(postval);
+
+#if defined(ARDUINO)
+
+  if(!ether.dnsLookup(server, true)) {
+    // if DNS lookup fails, use default IP
+    ether.hisip[0] = 54;
+    ether.hisip[1] = 172;
+    ether.hisip[2] = 244;
+    ether.hisip[3] = 116;
+  }
+
+  ether.httpPostVar(PSTR("/trigger/sprinkler/with/key/"), PSTR(DEFAULT_IFTTT_URL), key, postval, httpget_callback);
+  for(int l=0;l<100;l++)  ether.packetLoop(ether.packetReceive());
+  ether.hisport = _port;
+
+#else
+
+  EthernetClient client;
+  struct hostent *host;
+
+  host = gethostbyname(server);
+  if (!host) {
+    DEBUG_PRINT("can't resolve http station - ");
+    DEBUG_PRINTLN(server);
+    return;
+  }
+
+  if (!client.connect((uint8_t*)host->h_addr, 80)) {
+    client.stop();
+    return;
+  }
+
+  char postBuffer[1500];
+  sprintf(postBuffer, "POST /trigger/sprinkler/with/key/%s HTTP/1.0\r\n"
+                      "Host: %s\r\n"
+                      "Accept: */*\r\n"
+                      "Content-Length: %d\r\n"
+                      "Content-Type: application/json\r\n"
+                      "\r\n%s", key, host->h_name, strlen(postval), postval);
+  client.write((uint8_t *)postBuffer, strlen(postBuffer));
+
+  bzero(ether_buffer, ETHER_BUFFER_SIZE);
+
+  time_t timeout = now() + 5; // 5 seconds timeout
+  while(now() < timeout) {
+    int len=client.read((uint8_t *)ether_buffer, ETHER_BUFFER_SIZE);
+    if (len<=0) {
+      if(!client.connected())
+        break;
+      else
+        continue;
+    }
+    httpget_callback(0, 0, ETHER_BUFFER_SIZE);
+  }
+
+  client.stop();
+
+#endif
+  
+#endif
 }
 
 // ================================
@@ -878,13 +1160,21 @@ void make_logfile_name(char *name) {
   strcat_P(tmp_buffer, PSTR(".txt"));
 }
 
-const char *log_type_names[] = {
-  "",
-  "rs",
-  "rd",
-  "wl",
-  "et"
-};
+/* To save RAM space, we store log type names
+ * in program memory, and each name
+ * must be strictly two characters with an ending 0
+ * so each name is 3 characters total
+ */
+static const char log_type_names[] PROGMEM =
+    "  \0"
+    "rs\0"
+    "rd\0"
+    "wl\0"
+    "fl\0";
+
+/** write run record to log on SD card */
+void write_log(byte type, ulong curr_time) {
+  if (!os.options[OPTION_ENABLE_LOGGING]) return;
 
 // write run record to log on SD card
 void write_log(byte type, ulong curr_time) {
@@ -955,6 +1245,15 @@ void write_log(byte type, ulong curr_time) {
   }
   strcat_P(tmp_buffer, PSTR(","));
   ultoa(curr_time, tmp_buffer+strlen(tmp_buffer), 10);
+  if((os.options[OPTION_SENSOR_TYPE]==SENSOR_TYPE_FLOW) && (type==LOGDATA_STATION)) {
+    // RAH implementation of flow sensor
+    strcat_P(tmp_buffer, PSTR(","));
+    #if defined(ARDUINO)
+    dtostrf(flow_last_gpm,5,2,tmp_buffer+strlen(tmp_buffer));
+    #else
+    sprintf(tmp_buffer+strlen(tmp_buffer), "%5.2f", flow_last_gpm);
+    #endif
+  }
   strcat_P(tmp_buffer, PSTR("]\r\n"));
 
 #if defined(ARDUINO)

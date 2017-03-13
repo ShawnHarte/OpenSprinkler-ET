@@ -20,6 +20,9 @@
  * along with this program.  If not, see
  * <http://www.gnu.org/licenses/>.
  */
+#if not defined(ARDUINO)
+#include <netdb.h>
+#endif
 
 #include "OpenSprinkler.h"
 #include "gpio.h"
@@ -39,15 +42,18 @@ ulong OpenSprinkler::raindelay_start_time;
 byte OpenSprinkler::button_timeout;
 ulong OpenSprinkler::checkwt_lasttime;
 ulong OpenSprinkler::checkwt_success_lasttime;
+byte OpenSprinkler::weather_update_flag;
 
 char tmp_buffer[TMP_BUFFER_SIZE+1];       // scratch buffer
 
 #if defined(ARDUINO)
-  prog_char wtopts_filename[] PROGMEM = WEATHER_OPTS_FILENAME;
-  prog_char stns_filename[]   PROGMEM = STATION_ATTR_FILENAME;
+  const char wtopts_filename[] PROGMEM = WEATHER_OPTS_FILENAME;
+  const char stns_filename[]   PROGMEM = STATION_ATTR_FILENAME;
+  const char ifkey_filename[]  PROGMEM = IFTTT_KEY_FILENAME;
 #else
-  char wtopts_filename[] = WEATHER_OPTS_FILENAME;
-  char stns_filename[]   = STATION_ATTR_FILENAME;
+  const char wtopts_filename[] = WEATHER_OPTS_FILENAME;
+  const char stns_filename[]   = STATION_ATTR_FILENAME;
+  const char ifkey_filename[]  = IFTTT_KEY_FILENAME;  
 #endif
 
 #if defined(ARDUINO)
@@ -62,169 +68,261 @@ char tmp_buffer[TMP_BUFFER_SIZE+1];       // scratch buffer
   byte OpenSprinkler::pin_sr_data = PIN_SR_DATA;
 #endif
 
-/** Option json names */
-static prog_char _json_fwv [] PROGMEM = "fwv";
-static prog_char _json_tz  [] PROGMEM = "tz";
-static prog_char _json_ntp [] PROGMEM = "ntp";
-static prog_char _json_dhcp[] PROGMEM = "dhcp";
-static prog_char _json_ip1 [] PROGMEM = "ip1";
-static prog_char _json_ip2 [] PROGMEM = "ip2";
-static prog_char _json_ip3 [] PROGMEM = "ip3";
-static prog_char _json_ip4 [] PROGMEM = "ip4";
-static prog_char _json_gw1 [] PROGMEM = "gw1";
-static prog_char _json_gw2 [] PROGMEM = "gw2";
-static prog_char _json_gw3 [] PROGMEM = "gw3";
-static prog_char _json_gw4 [] PROGMEM = "gw4";
-static prog_char _json_hp0 [] PROGMEM = "hp0";
-static prog_char _json_hp1 [] PROGMEM = "hp1";
-static prog_char _json_hwv [] PROGMEM = "hwv";
-static prog_char _json_ext [] PROGMEM = "ext";
-static prog_char _json_sdt [] PROGMEM = "sdt";
-static prog_char _json_mas [] PROGMEM = "mas";
-static prog_char _json_mton[] PROGMEM = "mton";
-static prog_char _json_mtof[] PROGMEM = "mtof";
-static prog_char _json_sf  [] PROGMEM = "urs";
-static prog_char _json_rso [] PROGMEM = "rso";
-static prog_char _json_wl  [] PROGMEM = "wl";
-static prog_char _json_den [] PROGMEM = "den";
-static prog_char _json_ipas[] PROGMEM = "ipas";
-static prog_char _json_devid[]PROGMEM = "devid";
-static prog_char _json_con [] PROGMEM = "con";
-static prog_char _json_lit [] PROGMEM = "lit";
-static prog_char _json_dim [] PROGMEM = "dim";
-static prog_char _json_bst [] PROGMEM = "bst";
-static prog_char _json_uwt [] PROGMEM = "uwt";
-static prog_char _json_ntp1[] PROGMEM = "ntp1";
-static prog_char _json_ntp2[] PROGMEM = "ntp2";
-static prog_char _json_ntp3[] PROGMEM = "ntp3";
-static prog_char _json_ntp4[] PROGMEM = "ntp4";
-static prog_char _json_log [] PROGMEM = "lg";
-static prog_char _json_mas2[] PROGMEM = "mas2";
-static prog_char _json_mton2[]PROGMEM = "mton2";
-static prog_char _json_mtof2[]PROGMEM = "mtof2";
-static prog_char _json_fwm[]  PROGMEM = "fwm";
-static prog_char _json_fpr0[] PROGMEM = "fpr0";
-static prog_char _json_fpr1[] PROGMEM = "fpr1";
-static prog_char _json_etmn[] PROGMEM = "etmin";
-static prog_char _json_etmx[] PROGMEM = "etmax";
-static prog_char _json_reset[] PROGMEM = "reset";
-
-/** Option names */
-static prog_char _str_fwv [] PROGMEM = "FW:";
-static prog_char _str_tz  [] PROGMEM = "TZone:";
-static prog_char _str_ntp [] PROGMEM = "NTP?";
-static prog_char _str_dhcp[] PROGMEM = "DHCP?";
-static prog_char _str_ip1 [] PROGMEM = "OS.ip1:";
-static prog_char _str_ip2 [] PROGMEM = ".ip2:";
-static prog_char _str_ip3 [] PROGMEM = ".ip3:";
-static prog_char _str_ip4 [] PROGMEM = ".ip4:";
-static prog_char _str_gw1 [] PROGMEM = "GW.ip1:";
-static prog_char _str_hp  [] PROGMEM = "Port:";
-static prog_char _str_hwv [] PROGMEM = "HW: ";
-static prog_char _str_ext [] PROGMEM = "Exp. board:";
-static prog_char _str_sdt [] PROGMEM = "Stn delay:";
-static prog_char _str_mas [] PROGMEM = "Mas1:";
-static prog_char _str_mton[] PROGMEM = "Mas1  on adj:";
-static prog_char _str_mtof[] PROGMEM = "Mas1 off adj:";
-static prog_char _str_sf  [] PROGMEM = "Sensor:";
-static prog_char _str_rso [] PROGMEM = "Normally open?";
-static prog_char _str_wl  [] PROGMEM = "% Watering:";
-static prog_char _str_den [] PROGMEM = "Dev. enable?";
-static prog_char _str_ipas[] PROGMEM = "Ign pwd?";
-static prog_char _str_devid[]PROGMEM = "Dev. ID:";
-static prog_char _str_con [] PROGMEM = "LCD con.:";
-static prog_char _str_lit [] PROGMEM = "LCD lit.:";
-static prog_char _str_dim [] PROGMEM = "LCD dim.:";
-static prog_char _str_bst [] PROGMEM = "Boost:";
-static prog_char _str_uwt [] PROGMEM = "Use weather?";
-static prog_char _str_ntp1[] PROGMEM = "NTP.ip1:";
-static prog_char _str_ntp2[] PROGMEM = ".ip2:";
-static prog_char _str_ntp3[] PROGMEM = ".ip3:";
-static prog_char _str_ntp4[] PROGMEM = ".ip4:";
-static prog_char _str_log [] PROGMEM = "Log?";
-static prog_char _str_mas2[] PROGMEM = "Mas2:";
-static prog_char _str_mton2[]PROGMEM = "Mas2  on adj:";
-static prog_char _str_mtof2[]PROGMEM = "Mas2 off adj:";
-static prog_char _str_fwm[]  PROGMEM = "FWm:";
-static prog_char _str_fpr [] PROGMEM = "Pulse rate:";
-static prog_char _str_etmn[] PROGMEM = "ET min:";
-static prog_char _str_etmx[] PROGMEM = "ET max:";
-static prog_char _str_reset[] PROGMEM = "Reset all?";
-
-OptionStruct OpenSprinkler::options[NUM_OPTIONS] = {
-  {OS_FW_VERSION, 0, _str_fwv, _json_fwv}, // firmware version                                           0
-  {28,  108, _str_tz,   _json_tz},    // default time zone: GMT-5                                        1
-  {1,   1,   _str_ntp,  _json_ntp},   // use NTP sync                                                    2
-  {1,   1,   _str_dhcp, _json_dhcp},  // 0: use static ip, 1: use dhcp                                   3
-  {0,   255, _str_ip1,  _json_ip1},   // this and next 3 bytes define static ip                          4
-  {0,   255, _str_ip2,  _json_ip2},   //                                                                 5
-  {0,   255, _str_ip3,  _json_ip3},   //                                                                 6
-  {0,   255, _str_ip4,  _json_ip4},   //                                                                 7
-  {0,   255, _str_gw1,  _json_gw1},   // this and next 3 bytes define static gateway ip                  8
-  {0,   255, _str_ip2,  _json_gw2},   //                                                                 9
-  {0,   255, _str_ip3,  _json_gw3},   //                                                                10
-  {0,   255, _str_ip4,  _json_gw4},   //                                                                11       
-#if defined(ARDUINO)                  // on AVR, the default HTTP port is 80
-  {80,  255, _str_hp,   _json_hp0},   // this and next byte define http port number                     12
-  {0,   255, 0,         _json_hp1},   //                                                                13
-#else                                 // on RPI/BBB/LINUX, the default HTTP port is 8080
-  {144, 255, _str_hp,   _json_hp0},   // this and next byte define http port number                     12
-  {31,  255, 0,         _json_hp1},   //                                                                13
+/** Option json names (stored in progmem) */
+// IMPORTANT: each json name is strictly 5 characters
+// with 0 fillings if less
+#define OP_JSON_NAME_STEPSIZE 5
+#if defined(ARDUINO)
+const char op_json_names[] PROGMEM =
+#else
+const char op_json_names[] =
 #endif
-  {OS_HW_VERSION, 0, _str_hwv, _json_hwv}, //                                                           14
-  {0,   MAX_EXT_BOARDS, _str_ext, _json_ext}, // number of extension board. 0: no extension boards      15
-  {1,   1,   0,         0},           // the option 'sequential' is now retired                         16
-  {128, 247, _str_sdt,  _json_sdt},   // station delay time (-59 minutes to 59 minutes).                17
-  {0,   MAX_NUM_STATIONS, _str_mas,  _json_mas},   // index of master station. 0: no master station     18
-  {0,   60,  _str_mton, _json_mton},  // master on time [0,60] seconds                                  19
-  {60,  120, _str_mtof, _json_mtof},  // master off time [-60,60] seconds                               20
-  {0,   255, _str_sf,   _json_sf},    // sensor function (see SENSOR_TYPE macro defines)                21
-  {1,   1,   _str_rso,  _json_rso},   // rain sensor type. 0: normally closed; 1: normally open.        22
-  {100, 250, _str_wl,   _json_wl},    // water level (default 100%),                                    23
-  {1,   1,   _str_den,  _json_den},   // device enable                                                  24
-  {0,   1,   _str_ipas, _json_ipas},  // 1: ignore password; 0: use password                            25
-  {0,   255, _str_devid,_json_devid}, // device id                                                      26
-  {130, 255, _str_con,  _json_con},   // lcd contrast                                                   27
-  {100, 255, _str_lit,  _json_lit},   // lcd backlight                                                  28
-  {15,  255, _str_dim,  _json_dim},   // lcd dimming                                                    29
-  {80,  250, _str_bst,  _json_bst},   // boost time (only valid to DC and LATCH type)                   30
-  {0,   255, _str_uwt,  _json_uwt},   // weather algorithm (0 means not using weather algorithm)        31
-  {50,  255, _str_ntp1, _json_ntp1},  // this and the next three bytes define the ntp server ip         32
-  {97,  255, _str_ntp2, _json_ntp2},  //                                                                33
-  {210, 255, _str_ntp3, _json_ntp3},  //                                                                34
-  {169, 255, _str_ntp4, _json_ntp4},  //                                                                35
-  {1,   1,   _str_log,  _json_log},   // enable logging: 0: disable; 1: enable.                         36
-  {0,   MAX_NUM_STATIONS, _str_mas2, _json_mas2},  // index of master 2. 0: no master2 station          37
-  {0,   60,  _str_mton2,_json_mton2}, //                                                                38
-  {60,  120, _str_mtof2,_json_mtof2}, //                                                                39
-  {OS_FW_MINOR, 0, _str_fwm, _json_fwm}, // firmware version                                            40 
-  {100, 255, _str_fpr,  _json_fpr0},  //                                                                41
-  {0,   255, 0,         _json_fpr1},  //                                                                42
-  {50,   127, _str_etmn, _json_etmn}, //min et required to water                                        43
-  {150,  255, _str_etmx, _json_etmx}, //max et to water per cycle                                       44
-  {0,   1,   _str_reset,_json_reset}
+    "fwv\0\0"
+    "tz\0\0\0"
+    "ntp\0\0"
+    "dhcp\0"
+    "ip1\0\0"
+    "ip2\0\0"
+    "ip3\0\0"
+    "ip4\0\0"
+    "gw1\0\0"
+    "gw2\0\0"
+    "gw3\0\0"
+    "gw4\0\0"
+    "hp0\0\0"
+    "hp1\0\0"
+    "hwv\0\0"
+    "ext\0\0"
+    "sdt\0\0"
+    "mas\0\0"
+    "mton\0"
+    "mtof\0"
+    "urs\0\0"
+    "rso\0\0"
+    "wl\0\0\0"
+    "den\0\0"
+    "ipas\0"
+    "devid"
+    "con\0\0"
+    "lit\0\0"
+    "dim\0\0"
+    "bst\0\0"
+    "uwt\0\0"
+    "ntp1\0"
+    "ntp2\0"
+    "ntp3\0"
+    "ntp4\0"
+    "lg\0\0\0"
+    "mas2\0"
+    "mton2"
+    "mtof2"
+    "fwm\0\0"
+    "fpr0\0"
+    "fpr1\0"
+    "re\0\0\0"
+    "dns1\0"
+    "dns2\0"
+    "dns3\0"
+    "dns4\0"
+    "sar\0\0"
+    "ife\0\0"
+	"etmin"
+	"etmax"
+    "reset";
+
+/** Option promopts (stored in progmem, for LCD display) */
+// Each string is strictly 16 characters
+// with SPACE fillings if less
+#if defined(ARDUINO)
+const char op_prompts[] PROGMEM =
+#else
+char op_promopts[] =
+#endif
+    "Firmware version"
+    "Time zone (GMT):"
+    "Enable NTP sync?"
+    "Enable DHCP?    "
+    "Static.ip1:     "
+    "Static.ip2:     "
+    "Static.ip3:     "
+    "Static.ip4:     "
+    "Gateway.ip1:    "
+    "Gateway.ip2:    "
+    "Gateway.ip3:    "
+    "Gateway.ip4:    "
+    "HTTP Port:      "
+    "----------------"
+    "Hardware version"
+    "# of exp. board:"
+    "Stn. delay (sec)"
+    "Master 1 (Mas1):"
+    "Mas1  on adjust:"
+    "Mas1 off adjust:"
+    "Sensor type:    "
+    "Normally open?  "
+    "Watering level: "
+    "Device enabled? "
+    "Ignore password?"
+    "Device ID:      "
+    "LCD contrast:   "
+    "LCD brightness: "
+    "LCD dimming:    "
+    "DC boost time:  "
+    "Weather algo.:  "
+    "NTP server.ip1: "
+    "NTP server.ip2: "
+    "NTP server.ip3: "
+    "NTP server.ip4: "
+    "Enable logging? "
+    "Master 2 (Mas2):"
+    "Mas2  on adjust:"
+    "Mas2 off adjust:"
+    "Firmware minor: "
+    "Pulse rate:     "
+    "----------------"
+    "As remote ext.? "
+    "DNS server.ip1: "
+    "DNS server.ip2: "
+    "DNS server.ip3: "
+    "DNS server.ip4: "
+    "Special Refresh?"
+    "IFTTT Enable: "
+	"Min ET to water:"
+	"Max ET to water:"
+    "Factory reset?  ";
+
+/** Option maximum values (stored in progmem) */
+#if defined(ARDUINO)
+const char op_max[] PROGMEM = {
+#else
+const char op_max[] = {
+#endif
+  0,
+  108,
+  1,
+  1,
+  255,
+  255,
+  255,
+  255,
+  255,
+  255,
+  255,
+  255,
+  255,
+  255,
+  0,
+  MAX_EXT_BOARDS,
+  255,
+  MAX_NUM_STATIONS,
+  255,
+  255,
+  255,
+  1,
+  250,
+  1,
+  1,
+  255,
+  255,
+  255,
+  255,
+  250,
+  255,
+  255,
+  255,
+  255,
+  255,
+  1,
+  MAX_NUM_STATIONS,
+  255,
+  255,
+  0,
+  255,
+  255,
+  1,
+  255,
+  255,
+  255,
+  255,
+  1,
+  255,
+  127,
+  255,
+  1
 };
 
-/** Weekday display strings */
-static prog_char str_day0[] PROGMEM = "Mon";
-static prog_char str_day1[] PROGMEM = "Tue";
-static prog_char str_day2[] PROGMEM = "Wed";
-static prog_char str_day3[] PROGMEM = "Thu";
-static prog_char str_day4[] PROGMEM = "Fri";
-static prog_char str_day5[] PROGMEM = "Sat";
-static prog_char str_day6[] PROGMEM = "Sun";
-
-prog_char* days_str[7] = {
-  str_day0,
-  str_day1,
-  str_day2,
-  str_day3,
-  str_day4,
-  str_day5,
-  str_day6
+/** Option values (stored in RAM) */
+byte OpenSprinkler::options[] = {
+  OS_FW_VERSION, // firmware version
+  28, // default time zone: GMT-5
+  1,  // 0: disable NTP sync, 1: enable NTP sync
+  1,  // 0: use static ip, 1: use dhcp
+  0,  // this and next 3 bytes define static ip
+  0,
+  0,
+  0,
+  0,  // this and next 3 bytes define static gateway ip
+  0,
+  0,
+  0,
+#if defined(ARDUINO)  // on AVR, the default HTTP port is 80
+  80, // this and next byte define http port number
+  0,
+#else // on RPI/BBB/LINUX, the default HTTP port is 8080
+  144,// this and next byte define http port number
+  31,
+#endif
+  OS_HW_VERSION,
+  0,  // number of 8-station extension board. 0: no extension boards
+  120,// station delay time (-10 minutes to 10 minutes).
+  0,  // index of master station. 0: no master station
+  120,// master on time adjusted time (-10 minutes to 10 minutes)
+  120,// master off adjusted time (-10 minutes to 10 minutes)
+  0,  // sensor function (see SENSOR_TYPE macro defines)
+  0,  // rain sensor type. 0: normally closed; 1: normally open.
+  100,// water level (default 100%),
+  1,  // device enable
+  0,  // 1: ignore password; 0: use password
+  0,  // device id
+  150,// lcd contrast
+  100,// lcd backlight
+  50, // lcd dimming
+  80, // boost time (only valid to DC and LATCH type)
+  0,  // weather algorithm (0 means not using weather algorithm)
+  50, // this and the next three bytes define the ntp server ip
+  97,
+  210,
+  169,
+  1,  // enable logging: 0: disable; 1: enable.
+  0,  // index of master2. 0: no master2 station
+  120,// master2 on adjusted time
+  120,// master2 off adjusted time
+  OS_FW_MINOR, // firmware minor version
+  100,// this and next byte define flow pulse rate (100x)
+  0,  // default is 1.00 (100)
+  0,  // set as remote extension
+  8,  // this and the next three bytes define the custom dns server ip
+  8,
+  8,
+  8,
+  0,  // special station auto refresh
+  0,  // ifttt enable bits
+  50, //ET min to water 5mm
+  150,//ET max to water 15mm
+  0   // reset
 };
 
-// return local time (UTC time plus time zone offset)
+/** Weekday strings (stored in progmem, for LCD display) */
+static const char days_str[] PROGMEM =
+  "Mon\0"
+  "Tue\0"
+  "Wed\0"
+  "Thu\0"
+  "Fri\0"
+  "Sat\0"
+  "Sun\0";
+
+/** Calculate local time (UTC time plus time zone offset) */
 time_t OpenSprinkler::now_tz() {
   return now()+(int32_t)3600/4*(int32_t)(options[OPTION_TIMEZONE].value-48);
 }
@@ -282,33 +380,17 @@ byte OpenSprinkler::start_network() {
     // register with domain name "OS-xx" where xx is the last byte of the MAC address
     if (!ether.dhcpSetup()) return 0;
     // once we have valid DHCP IP, we write these into static IP / gateway IP
-    byte *ip = ether.myip;
-    options[OPTION_STATIC_IP1].value = ip[0];
-    options[OPTION_STATIC_IP2].value = ip[1];
-    options[OPTION_STATIC_IP3].value = ip[2];
-    options[OPTION_STATIC_IP4].value = ip[3];            
-
-    ip = ether.gwip;
-    options[OPTION_GATEWAY_IP1].value = ip[0];
-    options[OPTION_GATEWAY_IP2].value = ip[1];
-    options[OPTION_GATEWAY_IP3].value = ip[2];
-    options[OPTION_GATEWAY_IP4].value = ip[3];
+    memcpy(options+OPTION_STATIC_IP1, ether.myip, 4);
+    memcpy(options+OPTION_GATEWAY_IP1, ether.gwip,4);
+    memcpy(options+OPTION_DNS_IP1, ether.dnsip, 4);
     options_save();
     
   } else {
     // set up static IP
-    byte staticip[] = {
-      options[OPTION_STATIC_IP1].value,
-      options[OPTION_STATIC_IP2].value,
-      options[OPTION_STATIC_IP3].value,
-      options[OPTION_STATIC_IP4].value};
-
-    byte gateway[] = {
-      options[OPTION_GATEWAY_IP1].value,
-      options[OPTION_GATEWAY_IP2].value,
-      options[OPTION_GATEWAY_IP3].value,
-      options[OPTION_GATEWAY_IP4].value};
-    if (!ether.staticSetup(staticip, gateway, gateway))  return 0;
+    byte *staticip = options+OPTION_STATIC_IP1;
+    byte *gateway  = options+OPTION_GATEWAY_IP1;
+    byte *dns      = options+OPTION_DNS_IP1;
+    if (!ether.staticSetup(staticip, gateway, dns))  return 0;
   }
   return 1;
 }
@@ -519,6 +601,34 @@ void OpenSprinkler::begin() {
   _icon[7] = B00000;
   lcd.createChar(4, _icon);
 
+  // Remote extension icon
+  _icon[2] = B00000;
+  _icon[3] = B10001;
+  _icon[4] = B01011;
+  _icon[5] = B00101;
+  _icon[6] = B01001;
+  _icon[7] = B11110;
+  lcd.createChar(5, _icon);
+
+  // Flow sensor icon
+  _icon[2] = B00000;
+  _icon[3] = B11010;
+  _icon[4] = B10010;
+  _icon[5] = B11010;
+  _icon[6] = B10011;
+  _icon[7] = B00000;
+  lcd.createChar(6, _icon);
+
+  // Program switch icon
+  _icon[1] = B11100;
+  _icon[2] = B10100;
+  _icon[3] = B11100;
+  _icon[4] = B10010;
+  _icon[5] = B10110;
+  _icon[6] = B00010;
+  _icon[7] = B00111;
+  lcd.createChar(7, _icon);  
+
   // set sd cs pin high to release SD
   pinMode(PIN_SD_CS, OUTPUT);
   digitalWrite(PIN_SD_CS, HIGH);
@@ -526,6 +636,14 @@ void OpenSprinkler::begin() {
   if(sd.begin(PIN_SD_CS, SPI_HALF_SPEED)) {
     status.has_sd = 1;
   }
+  
+  #if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
+  if(!status.has_sd) {
+    lcd.setCursor(0, 0);
+    lcd_print_pgm(PSTR("Error Code: 0x2D"));
+    while(1){}
+  }
+  #endif
 
   // set button pins
   // enable internal pullup
@@ -604,6 +722,20 @@ void OpenSprinkler::apply_all_station_bits() {
   #else
   digitalWrite(PIN_SR_LATCH, HIGH);
   #endif
+
+  if(options[OPTION_SPE_AUTO_REFRESH]) {
+    // handle refresh of RF and remote stations
+    // each time apply_all_station_bits is called
+    // we refresh the station whose index is the current time modulo MAX_NUM_STATIONS
+    static byte last_sid = 0;
+    byte sid = now() % MAX_NUM_STATIONS;
+    if (sid != last_sid) {  // avoid refreshing the same station twice in a roll
+      last_sid = sid;
+      bid=sid>>3;
+      s=sid&0x07;
+      switch_special_station(sid, (station_bits[bid]>>s)&0x01);
+    }
+  }
 }
 
 void OpenSprinkler::rainsensor_status() {
@@ -612,6 +744,26 @@ void OpenSprinkler::rainsensor_status() {
   status.rain_sensed = (digitalRead(PIN_RAINSENSOR) == options[OPTION_RAINSENSOR_TYPE].value ? 0 : 1);
 }
 
+/** Return program switch status */
+bool OpenSprinkler::programswitch_status(ulong curr_time) {
+  if(options[OPTION_SENSOR_TYPE]!=SENSOR_TYPE_PSWITCH) return false;
+  static ulong keydown_time = 0;
+  byte val = digitalRead(PIN_RAINSENSOR);
+  if(!val && !keydown_time) keydown_time = curr_time;
+  else if(val && keydown_time && (curr_time > keydown_time)) {
+    keydown_time = 0;
+    return true;
+  }
+  return false;
+}
+/** Read current sensing value
+ * OpenSprinkler has a 0.2 ohm current sensing resistor.
+ * Therefore the conversion from analog reading to milli-amp is:
+ * (r/1024)*3.3*1000/0.2
+ * Newer AC controller has a 0.2 ohm curent sensing resistor
+ * with op-amp to sense the peak current. Therefore the actual
+ * current is discounted by 0.707
+ */
 #if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
 // OpenSprinkler DC uses a 0.22 ohm current sensing resistor
 // Therefore the conversion from analog reading to milli-amp is:
@@ -679,17 +831,16 @@ static ulong nvm_hex2ulong(byte *addr, byte len) {
   return v;
 }
 
-// Get station name from nvm and parse into RF code
-uint16_t OpenSprinkler::get_station_name_rf(byte sid, ulong* on, ulong *off) {
-  byte *start = (byte *)(ADDR_NVM_STN_NAMES) + (int)sid * STATION_NAME_SIZE;
+/** Parse RF code into on/off/timeing sections */
+uint16_t OpenSprinkler::parse_rfstation_code(RFStationData *data, ulong* on, ulong *off) {
   ulong v;
-  v = nvm_hex2ulong(start, 6);
+  v = hex2ulong(data->on, sizeof(data->on));
   if (!v) return 0;
   if (on) *on = v;
-  v = nvm_hex2ulong(start+6, 6);
+	v = hex2ulong(data->off, sizeof(data->off));
   if (!v) return 0;
   if (off) *off = v;
-  v = nvm_hex2ulong(start+12, 4);
+	v = hex2ulong(data->timing, sizeof(data->timing));
   if (!v) return 0;
   return v;
 }
@@ -756,10 +907,43 @@ byte OpenSprinkler::weekday_today() {
 #endif
 }
 
-// Set station bit
-void OpenSprinkler::set_station_bit(byte sid, byte value) {
-  byte bid = (sid>>3);  // board index
-  byte s = sid&0x07;    // station bit index
+/** Switch special station */
+void OpenSprinkler::switch_special_station(byte sid, byte value) {
+  // check station special bit
+  if(station_attrib_bits_read(ADDR_NVM_STNSPE+(sid>>3))&(1<<(sid&0x07))) {
+    // read station special data from sd card
+    int stepsize=sizeof(StationSpecialData);
+    read_from_file(stns_filename, tmp_buffer, stepsize, sid*stepsize);
+    StationSpecialData *stn = (StationSpecialData *)tmp_buffer;
+    // check station type
+    if(stn->type==STN_TYPE_RF) {
+      // transmit RF signal
+      switch_rfstation((RFStationData *)stn->data, value);
+    } else if(stn->type==STN_TYPE_REMOTE) {
+      // request remote station
+      switch_remotestation((RemoteStationData *)stn->data, value);
+    }
+#if !defined(ARDUINO) || defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
+    // GPIO and HTTP stations are only available for OS23 or OSPi
+    else if(stn->type==STN_TYPE_GPIO) {
+      // set GPIO pin
+      switch_gpiostation((GPIOStationData *)stn->data, value);
+    } else if(stn->type==STN_TYPE_HTTP) {
+      // send GET command
+      switch_httpstation((HTTPStationData *)stn->data, value);
+    }
+#endif    
+  }
+}
+
+/** Set station bit
+ * This function sets/resets the corresponding station bit variable
+ * You have to call apply_all_station_bits next to apply the bits
+ * (which results in physical actions of opening/closing valves).
+ */
+byte OpenSprinkler::set_station_bit(byte sid, byte value) {
+  byte *data = station_bits+(sid>>3);  // pointer to the station byte
+  byte mask = (byte)1<<(sid&0x07); // mask
   if (value) {
     station_bits[bid] = station_bits[bid] | ((byte)1<<s);
   }
@@ -809,19 +993,197 @@ void send_rfsignal(ulong code, ulong len) {
   }
 }
 
-void OpenSprinkler::send_rfstation_signal(byte sid, bool turnon) {
+/** Switch RF station
+ * This function takes a RF code,
+ * parses it into signals and timing,
+ * and sends it out through RF transmitter.
+ */
+void OpenSprinkler::switch_rfstation(RFStationData *data, bool turnon) {
   ulong on, off;
-  uint16_t length = get_station_name_rf(sid, &on, &off);
+  uint16_t length = parse_rfstation_code(data, &on, &off);
 #if defined(ARDUINO)
   length = (length>>1)+(length>>2);   // due to internal call delay, scale time down to 75%
 #else
   length = (length>>2)+(length>>3);   // on RPi and BBB, there is even more overhead, scale to 37.5%
 #endif
-  send_rfsignal(turnon ? on : off, length);
+
 }
 
+/** Switch GPIO station
+ * Special data for GPIO Station is three bytes of ascii decimal (not hex)
+ * First two bytes are zero padded GPIO pin number.
+ * Third byte is either 0 or 1 for active low (GND) or high (+5V) relays
+ */
+void OpenSprinkler::switch_gpiostation(GPIOStationData *data, bool turnon) {
+  byte gpio = (data->pin[0] - '0') * 10 + (data->pin[1] - '0');
+  byte activeState = data->active - '0';
 
-/** Options Functions */
+  pinMode(gpio, OUTPUT);
+  if (turnon)
+    digitalWrite(gpio, activeState);
+  else
+    digitalWrite(gpio, 1-activeState);
+}
+
+/** Callback function for browseUrl calls */
+void httpget_callback(byte status, uint16_t off, uint16_t len) {
+#if defined(SERIAL_DEBUG)
+  Ethernet::buffer[off+ETHER_BUFFER_SIZE-1] = 0;
+  DEBUG_PRINTLN((const char*) Ethernet::buffer + off);
+#endif
+}
+
+/** Switch remote station
+ * This function takes a remote station code,
+ * parses it into remote IP, port, station index,
+ * and makes a HTTP GET request.
+ * The remote controller is assumed to have the same
+ * password as the main controller
+ */
+void OpenSprinkler::switch_remotestation(RemoteStationData *data, bool turnon) {
+#if defined(ARDUINO)
+  // construct string
+  ulong ip = hex2ulong(data->ip, sizeof(data->ip));
+  ether.hisip[0] = ip>>24;
+  ether.hisip[1] = (ip>>16)&0xff;
+  ether.hisip[2] = (ip>>8)&0xff;
+  ether.hisip[3] = ip&0xff;
+
+  uint16_t _port = ether.hisport; // save current port number
+  ether.hisport = hex2ulong(data->port, sizeof(data->port));
+
+  char *p = tmp_buffer + sizeof(RemoteStationData) + 1;
+  BufferFiller bf = (byte*)p;
+  // MAX_NUM_STATIONS is the refresh cycle
+  uint16_t timer = options[OPTION_SPE_AUTO_REFRESH]?2*MAX_NUM_STATIONS:65535;
+  bf.emit_p(PSTR("?pw=$E&sid=$D&en=$D&t=$D"),
+            ADDR_NVM_PASSWORD,
+            (int)hex2ulong(data->sid,sizeof(data->sid)),
+            turnon, timer);
+  ether.browseUrl(PSTR("/cm"), p, PSTR("*"), httpget_callback);
+  for(int l=0;l<100;l++)  ether.packetLoop(ether.packetReceive());
+  ether.hisport = _port;
+#else
+  EthernetClient client;
+
+  uint8_t hisip[4];
+  uint16_t hisport;
+  ulong ip = hex2ulong(data->ip, sizeof(data->ip));
+  hisip[0] = ip>>24;
+  hisip[1] = (ip>>16)&0xff;
+  hisip[2] = (ip>>8)&0xff;
+  hisip[3] = ip&0xff;
+  hisport = hex2ulong(data->port, sizeof(data->port));
+
+  if (!client.connect(hisip, hisport)) {
+    client.stop();
+    return;
+  }
+
+  char *p = tmp_buffer + sizeof(RemoteStationData) + 1;
+  BufferFiller bf = p;
+  // MAX_NUM_STATIONS is the refresh cycle
+  uint16_t timer = options[OPTION_SPE_AUTO_REFRESH]?2*MAX_NUM_STATIONS:65535;  
+  bf.emit_p(PSTR("GET /cm?pw=$E&sid=$D&en=$D&t=$D"),
+            ADDR_NVM_PASSWORD,
+            (int)hex2ulong(data->sid, sizeof(data->sid)),
+            turnon, timer);
+  bf.emit_p(PSTR(" HTTP/1.0\r\nHOST: *\r\n\r\n"));
+
+  client.write((uint8_t *)p, strlen(p));
+
+  bzero(ether_buffer, ETHER_BUFFER_SIZE);
+
+  time_t timeout = now() + 5; // 5 seconds timeout
+  while(now() < timeout) {
+    int len=client.read((uint8_t *)ether_buffer, ETHER_BUFFER_SIZE);
+    if (len<=0) {
+      if(!client.connected())
+        break;
+      else
+        continue;
+    }
+    httpget_callback(0, 0, ETHER_BUFFER_SIZE);
+  }
+  client.stop();
+#endif
+}
+
+/** Switch http station
+ * This function takes an http station code,
+ * parses it into a server name and two HTTP GET requests.
+ */
+void OpenSprinkler::switch_httpstation(HTTPStationData *data, bool turnon) {
+
+  static HTTPStationData copy;
+  // make a copy of the HTTP station data and work with it
+  memcpy((char*)&copy, (char*)data, sizeof(HTTPStationData));
+  char * server = strtok((char *)copy.data, ",");
+  char * port = strtok(NULL, ",");
+  char * on_cmd = strtok(NULL, ",");
+  char * off_cmd = strtok(NULL, ",");
+  char * cmd = turnon ? on_cmd : off_cmd;
+
+#if defined(ARDUINO)
+
+  if(!ether.dnsLookup(server, true)) {
+    char *ip0 = strtok(server, ".");
+    char *ip1 = strtok(NULL, ".");
+    char *ip2 = strtok(NULL, ".");
+    char *ip3 = strtok(NULL, ".");
+  
+    ether.hisip[0] = ip0 ? atoi(ip0) : 0;
+    ether.hisip[1] = ip1 ? atoi(ip1) : 0;
+    ether.hisip[2] = ip2 ? atoi(ip2) : 0;
+    ether.hisip[3] = ip3 ? atoi(ip3) : 0;
+  }
+
+  uint16_t _port = ether.hisport;
+  ether.hisport = atoi(port);
+  ether.browseUrlRamHost(PSTR("/"), cmd, server, httpget_callback);
+  for(int l=0;l<100;l++)  ether.packetLoop(ether.packetReceive());
+  ether.hisport = _port;
+
+#else
+
+  EthernetClient client;
+  struct hostent *host;
+
+  host = gethostbyname(server);
+  if (!host) {
+    DEBUG_PRINT("can't resolve http station - ");
+    DEBUG_PRINTLN(server);
+    return;
+  }
+
+  if (!client.connect((uint8_t*)host->h_addr, atoi(port))) {
+    client.stop();
+    return;
+  }
+
+  char getBuffer[255];
+  sprintf(getBuffer, "GET /%s HTTP/1.0\r\nHOST: %s\r\n\r\n", cmd, host->h_name);
+  client.write((uint8_t *)getBuffer, strlen(getBuffer));
+
+  bzero(ether_buffer, ETHER_BUFFER_SIZE);
+
+  time_t timeout = now() + 5; // 5 seconds timeout
+  while(now() < timeout) {
+    int len=client.read((uint8_t *)ether_buffer, ETHER_BUFFER_SIZE);
+    if (len<=0) {
+      if(!client.connected())
+        break;
+      else
+        continue;
+    }
+    httpget_callback(0, 0, ETHER_BUFFER_SIZE);
+  }
+
+  client.stop();
+#endif
+}
+
+/** Setup function for options */
 void OpenSprinkler::options_setup() {
 
   // add 0.5 second delay to allow nvm to stablize
@@ -867,7 +1229,7 @@ void OpenSprinkler::options_setup() {
       nvm_write_block(tmp_buffer, (void*)i, strlen(tmp_buffer)+1);
     }
 
-    DEBUG_PRINTLN("write special data");
+    remove_file(stns_filename);
     tmp_buffer[0]=STN_TYPE_STANDARD;
     int stepsize=sizeof(StationSpecialData);
     for(i=0;i<MAX_NUM_STATIONS;i++) {
@@ -1130,6 +1492,12 @@ void OpenSprinkler::lcd_print_station(byte line, char c) {
   {
     lcd.write(3);
   }
+  if(options[OPTION_SENSOR_TYPE]==SENSOR_TYPE_FLOW) {
+    lcd.write(6);
+  }
+  if(options[OPTION_SENSOR_TYPE]==SENSOR_TYPE_PSWITCH) {
+    lcd.write(7);
+  }
   lcd.setCursor(14, 1);
   if (status.has_sd)  lcd.write(2);
 
@@ -1178,13 +1546,14 @@ void OpenSprinkler::lcd_print_option(int i) {
     break;
   case OPTION_MASTER_ON_ADJ:
   case OPTION_MASTER_ON_ADJ_2:
-    lcd_print_pgm(PSTR("+"));
-    lcd.print((int)options[i].value);
-    break;
   case OPTION_MASTER_OFF_ADJ:
   case OPTION_MASTER_OFF_ADJ_2:
-    if(options[i].value>=60)  lcd_print_pgm(PSTR("+"));
-    lcd.print((int)options[i].value-60);
+  case OPTION_STATION_DELAY_TIME:
+    {
+    int16_t t=water_time_decode_signed(options[i]);
+    if(t>=0)  lcd_print_pgm(PSTR("+"));
+    lcd.print(t);    
+    }
     break;
   case OPTION_HTTPPORT_0:
     lcd.print((unsigned int)(options[i+1].value<<8)+options[i].value);
@@ -1197,9 +1566,6 @@ void OpenSprinkler::lcd_print_option(int i) {
     lcd.print((fpr/10)%10);
     lcd.print(fpr%10);
     }
-    break;
-  case OPTION_STATION_DELAY_TIME:
-    lcd.print(water_time_decode_signed(options[i].value));
     break;
   case OPTION_LCD_CONTRAST:
     lcd_set_contrast();
@@ -1323,16 +1689,20 @@ void OpenSprinkler::ui_set_options(int oid)
       }
       else {
         // click, move to the next option
-        if (i==OPTION_USE_DHCP && options[i].value) i += 9; // if use DHCP, skip static ip set
-        else if(i==OPTION_HTTPPORT_0) i+=2; // skip OPTION_HTTPPORT_1
-        else if(i==OPTION_PULSE_RATE_0) i+=2; // skip OPTION_PULSE_RATE_1
-        else if(i==OPTION_SENSOR_TYPE && options[i].value!=SENSOR_TYPE_RAIN) i+=2; // if not using rain sensor, skip rain sensor type
-        else if(i==OPTION_MASTER_STATION && options[i].value==0) i+=3; // if not using master station, skip master on/off adjust
-        else if(i==OPTION_MASTER_STATION_2&& options[i].value==0) i+=3; // if not using master2, skip master2 on/off adjust
+        if (i==OPTION_USE_DHCP && options[i]) i += 9; // if use DHCP, skip static ip set
+        else if (i==OPTION_HTTPPORT_0) i+=2; // skip OPTION_HTTPPORT_1
+        else if (i==OPTION_PULSE_RATE_0) i+=2; // skip OPTION_PULSE_RATE_1
+        else if (i==OPTION_SENSOR_TYPE && options[i]!=SENSOR_TYPE_RAIN) i+=2; // if not using rain sensor, skip rain sensor type
+        else if (i==OPTION_MASTER_STATION && options[i]==0) i+=3; // if not using master station, skip master on/off adjust
+        else if (i==OPTION_MASTER_STATION_2&& options[i]==0) i+=3; // if not using master2, skip master2 on/off adjust
         else  {
           i = (i+1) % NUM_OPTIONS;
         }
-        if(options[i].json_str==0) i++;
+        if(i==OPTION_SEQUENTIAL_RETIRED) i++;
+        #if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
+        else if (hw_type==HW_TYPE_AC && i==OPTION_BOOST_TIME) i++;  // skip boost time for non-DC controller
+        else if (lcd.type()==LCD_I2C && i==OPTION_LCD_CONTRAST) i+=2;
+        #endif      
       }
       break;
     }
@@ -1356,7 +1726,12 @@ void OpenSprinkler::lcd_set_brightness(byte value) {
   #if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
   if (lcd.type()==LCD_I2C) {
     if (value) lcd.backlight();
-    else lcd.noBacklight();
+    else {
+      // turn off LCD backlight
+      // only if dimming value is set to 0
+      if(!options[OPTION_LCD_DIMMING])  lcd.noBacklight();
+      else lcd.backlight();
+    }
   }
   #endif
   if (lcd.type()==LCD_STD) {

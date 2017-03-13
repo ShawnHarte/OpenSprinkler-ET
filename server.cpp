@@ -49,7 +49,6 @@ extern char tmp_buffer[];
 extern OpenSprinkler os;
 extern ProgramData pd;
 
-void write_log(byte type, ulong curr_time);
 void schedule_all_stations(ulong curr_time);
 void turn_off_station(byte sid, ulong curr_time);
 void process_dynamic_events(ulong curr_time);
@@ -76,41 +75,38 @@ int available_ether_buffer();
 #define HTML_NOT_PERMITTED     0x30
 #define HTML_REDIRECT_HOME     0xFF
 
-static prog_uchar html200OK[] PROGMEM =
+static const char html200OK[] PROGMEM =
   "HTTP/1.1 200 OK\r\n"
 ;
 
-static prog_uchar htmlCacheCtrl[] PROGMEM =
+static const char htmlCacheCtrl[] PROGMEM =
   "Cache-Control: max-age=604800, public\r\n"
 ;
 
-static prog_uchar htmlNoCache[] PROGMEM =
+static const char htmlNoCache[] PROGMEM =
   "Cache-Control: max-age=0, no-cache, no-store, must-revalidate\r\n"
 ;
 
-static prog_uchar htmlContentHTML[] PROGMEM =
+static const char htmlContentHTML[] PROGMEM =
   "Content-Type: text/html\r\n"
 ;
 
-static prog_uchar htmlAccessControl[] PROGMEM =
+static const char htmlAccessControl[] PROGMEM =
   "Access-Control-Allow-Origin: *\r\n"
 ;
 
-static prog_uchar htmlContentJSON[] PROGMEM =
+static const char htmlContentJSON[] PROGMEM =
   "Content-Type: application/json\r\n"
   "Connection: close\r\n"
 ;
 
-static prog_uchar htmlMobileHeader[] PROGMEM =
+static const char htmlMobileHeader[] PROGMEM =
   "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0,minimum-scale=1.0,user-scalable=no\">\r\n"
 ;
 
-static prog_uchar htmlReturnHome[] PROGMEM =
+static const char htmlReturnHome[] PROGMEM =
   "<script>window.location=\"/\";</script>\n"
 ;
-
-extern const char wtopts_filename[];
-extern const char stns_filename[];
 
 #if defined(ARDUINO)
 void print_html_standard_header() {
@@ -441,8 +437,46 @@ byte server_change_stations(char *p)
   server_change_stations_attrib(p, 'd', ADDR_NVM_STNDISABLE); // disable
   server_change_stations_attrib(p, 'q', ADDR_NVM_STNSEQ); // sequential
   server_change_stations_attrib(p, 'p', ADDR_NVM_STNSPE); // special
-  server_change_stations_attrib(p, 'h', ADDR_NVM_STNPHT); // height
+#endif
+  /* handle special data */
+  if(findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("sid"), true)) {
+    sid = atoi(tmp_buffer);
+    if(sid<0 || sid>os.nstations) return HTML_DATA_OUTOFBOUND;
+    if(findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("st"), true) &&
+       findKeyVal(p, tmp_buffer+1, TMP_BUFFER_SIZE-1, PSTR("sd"), true)) {
+      int stepsize=sizeof(StationSpecialData);
+      tmp_buffer[0]-='0';
+      tmp_buffer[stepsize-1] = 0;
 
+#if !defined(ARDUINO) || defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
+      // only process GPIO and HTTP stations for OS 2.3 and OSPi
+	    if(tmp_buffer[0] == STN_TYPE_GPIO) {
+        // check that pin does not clash with OSPi pins
+		    byte gpio = (tmp_buffer[1] - '0') * 10 + tmp_buffer[2] - '0';
+		    byte activeState = tmp_buffer[3] - '0';
+
+		    byte gpioList[] = PIN_FREE_LIST;
+		    bool found = false;
+		    for (int i = 0; i < sizeof(gpioList) && found == false; i++) {
+			    if (gpioList[i] == gpio) found = true;
+		    }
+		    if (!found || activeState > 1) return HTML_DATA_OUTOFBOUND;
+	    } else if (tmp_buffer[0] == STN_TYPE_HTTP) {
+		    urlDecode(tmp_buffer + 1); // Unwind any url encoding of special data
+		    if (strlen(tmp_buffer+1) > sizeof(HTTPStationData)) {
+			    return HTML_DATA_OUTOFBOUND;
+		    }
+	    }
+#endif
+
+      write_to_file(stns_filename, tmp_buffer, strlen(tmp_buffer)+1, stepsize*sid, false);
+
+    } else {
+
+      return HTML_DATA_MISSING;
+
+    }
+  }
   return HTML_SUCCESS;
 }
 
@@ -461,6 +495,37 @@ uint16_t parse_listdata(char **p) {
   tmp_buffer[i]=0;
   *p = pv+1;
   return (uint16_t)atol(tmp_buffer);
+}
+
+void manual_start_program(byte, byte);
+/** Manual start program
+ * Command: /mp?pw=xxx&pid=xxx&uwt=xxx
+ *
+ * pw:  password
+ * pid: program index (0 refers to the first program)
+ * uwt: use weather (i.e. watering percentage)
+ */
+byte server_manual_program(char *p) {
+  if (!findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("pid"), true))
+    return HTML_DATA_MISSING;
+
+  int pid=atoi(tmp_buffer);
+  if (pid < 0 || pid >= pd.nprograms) {
+    return HTML_DATA_OUTOFBOUND;
+  }
+
+  byte uwt = 0;
+  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("uwt"), true)) {
+    if(tmp_buffer[0]=='1') uwt = 1;
+  }
+
+  // reset all stations and prepare to run one-time program
+  reset_all_stations_immediate();
+
+  manual_start_program(pid+1, uwt);
+
+  return HTML_SUCCESS;
+
 }
 
 /**
@@ -570,7 +635,7 @@ byte server_moveup_program(char *p) {
   dur?:  station water time
   name:  program name
 */
-prog_char _str_program[] PROGMEM = "Program ";
+const char _str_program[] PROGMEM = "Program ";
 byte server_change_program(char *p) {
   byte i;
 
@@ -622,7 +687,7 @@ byte server_change_program(char *p) {
   pv++; // this should be a '['
   for (i=0;i<os.nstations;i++) {
     uint16_t pre = parse_listdata(&pv);
-    prog.durations[i] = water_time_encode(pre);
+    prog.durations[i] = pre;
   }
   pv++; // this should be a ']'
   pv++; // this should be a ']'
@@ -658,9 +723,12 @@ void server_json_options_main() {
         oid==OPTION_GATEWAY_IP1 || oid==OPTION_GATEWAY_IP2 || oid==OPTION_GATEWAY_IP3 || oid==OPTION_GATEWAY_IP4)
         continue;
     #endif
-    int32_t v=os.options[oid].value;
-    if (oid==OPTION_MASTER_OFF_ADJ || oid==OPTION_MASTER_OFF_ADJ_2) {v-=60;}
-    if (oid==OPTION_STATION_DELAY_TIME) {v=water_time_decode_signed(v);}
+    int32_t v=os.options[oid];
+    if (oid==OPTION_MASTER_OFF_ADJ || oid==OPTION_MASTER_OFF_ADJ_2 ||
+        oid==OPTION_MASTER_ON_ADJ  || oid==OPTION_MASTER_ON_ADJ_2 ||
+        oid==OPTION_STATION_DELAY_TIME) {
+      v=water_time_decode_signed(v);
+    }
     #if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
     if (oid==OPTION_BOOST_TIME) {
       if (os.hw_type==HW_TYPE_AC) continue;
@@ -672,8 +740,18 @@ void server_json_options_main() {
    
     if (os.options[oid].json_str==0) continue;
     if (oid==OPTION_DEVICE_ID && os.status.has_hwmac) continue; // do not send DEVICE ID if hardware MAC exists
-    bfill.emit_p(PSTR("\"$F\":$D"),
-                 os.options[oid].json_str, v);
+   
+#if defined(ARDUINO) 
+    if (os.lcd.type() == LCD_I2C) {
+      // for I2C type LCD, we can't adjust contrast or backlight
+      if(oid==OPTION_LCD_CONTRAST || oid==OPTION_LCD_BACKLIGHT) continue;
+    }
+#endif
+
+    // each json name takes 5 characters
+    strncpy_P0(tmp_buffer, op_json_names+oid*5, 5);
+    bfill.emit_p(PSTR("\"$S\":$D"),
+                 tmp_buffer, v);
     if(oid!=NUM_OPTIONS-1)
       bfill.emit_p(PSTR(","));
   }
@@ -709,9 +787,9 @@ void server_json_programs_main() {
     bfill.emit_p(PSTR("$D],["), prog.starttimes[i]);  // this is the last element
     // station water time
     for (i=0; i<os.nstations-1; i++) {
-      bfill.emit_p(PSTR("$L,"),(unsigned long)water_time_decode(prog.durations[i]));
+      bfill.emit_p(PSTR("$L,"),(unsigned long)prog.durations[i]);
     }
-    bfill.emit_p(PSTR("$L],\""),(unsigned long)water_time_decode(prog.durations[i])); // this is the last element
+    bfill.emit_p(PSTR("$L],\""),(unsigned long)prog.durations[i]); // this is the last element
     // program name
     strncpy(tmp_buffer, prog.name, PROGRAM_NAME_SIZE);
     tmp_buffer[PROGRAM_NAME_SIZE] = 0;  // make sure the string ends
@@ -799,11 +877,13 @@ void server_json_controller_main() {
   if(read_from_file(wtopts_filename, tmp_buffer)) {
     bfill.emit_p(PSTR(",\"wto\":{$S}"), tmp_buffer);
   }
-#if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
-  if(os.status.has_curr_sense) {
-    bfill.emit_p(PSTR(",\"curr\":$D"), os.read_current());
+  
+#if !defined(ARDUINO) || defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
+  if(read_from_file(ifkey_filename, tmp_buffer)) {
+    bfill.emit_p(PSTR(",\"ifkey\":\"$S\""), tmp_buffer);
   }
 #endif
+
   bfill.emit_p(PSTR("}"));
   delay(1);
 }
@@ -962,9 +1042,10 @@ byte server_change_options(char *p)
         os.options[oid].value = 1;  // if the bool variable is detected, set to 1
       } else {
 		    int32_t v = atol(tmp_buffer);
-		    if (oid==OPTION_MASTER_OFF_ADJ || oid==OPTION_MASTER_OFF_ADJ_2) {v+=60;} // master off time
-		    if (oid==OPTION_STATION_DELAY_TIME) {
-		      v=water_time_encode_signed((int16_t)v);
+		    if (oid==OPTION_MASTER_OFF_ADJ || oid==OPTION_MASTER_OFF_ADJ_2 ||
+		        oid==OPTION_MASTER_ON_ADJ  || oid==OPTION_MASTER_ON_ADJ_2  ||
+		        oid==OPTION_STATION_DELAY_TIME) {
+		      v=water_time_encode_signed(v);
 		    } // encode station delay time
         #if defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284__)
         if(os.hw_type==HW_TYPE_DC && oid==OPTION_BOOST_TIME) {
@@ -1007,6 +1088,15 @@ byte server_change_options(char *p)
     tmp_buffer[0]=0;
     nvm_write_block(tmp_buffer, (void*)ADDR_NVM_WEATHER_KEY, strlen(tmp_buffer)+1);
   }
+  keyfound = 0;
+  if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("ifkey"), true, &keyfound)) {
+    urlDecode(tmp_buffer);
+    tmp_buffer[TMP_BUFFER_SIZE-1]=0;
+    write_to_file(ifkey_filename, tmp_buffer, strlen(tmp_buffer));
+  } else if (keyfound) {
+    tmp_buffer[0]=0;
+    write_to_file(ifkey_filename, tmp_buffer, strlen(tmp_buffer));
+  }  
   // if not using NTP and manually setting time
   if (!os.options[OPTION_USE_NTP].value && findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("ttt"), true)) {
     unsigned long t;
@@ -1104,14 +1194,14 @@ byte server_json_status(char *p)
 }
 
 /**
-  Test station (previously manual operation)
-  Command: /cm?pw=xxx&sid=x&en=x&t=x
-
-  pw: password
-  sid:station name (starting from 0)
-  en: enable (0 or 1)
-  t:  timer (required if en=1)
-*/
+ * Test station (previously manual operation)
+ * Command: /cm?pw=xxx&sid=x&en=x&t=x
+ *
+ * pw: password
+ * sid:station index (starting from 0)
+ * en: enable (0 or 1)
+ * t:  timer (required if en=1)
+ */
 byte server_change_manual(char *p) {
   int sid=-1;
   if (findKeyVal(p, tmp_buffer, TMP_BUFFER_SIZE, PSTR("sid"), true)) {
@@ -1326,65 +1416,58 @@ struct URLStruct{
 };
 
 
-// Server function urls
-// !!!Important!!!: to save space, each url must be two characters long
-prog_char _url_cv [] PROGMEM = "cv";
-prog_char _url_jc [] PROGMEM = "jc";
-
-prog_char _url_dp [] PROGMEM = "dp";
-prog_char _url_cp [] PROGMEM = "cp";
-prog_char _url_cr [] PROGMEM = "cr";
-prog_char _url_up [] PROGMEM = "up";
-prog_char _url_jp [] PROGMEM = "jp";
-
-prog_char _url_co [] PROGMEM = "co";
-prog_char _url_jo [] PROGMEM = "jo";
-prog_char _url_sp [] PROGMEM = "sp";
-
-prog_char _url_js [] PROGMEM = "js";
-prog_char _url_cm [] PROGMEM = "cm";
-
-prog_char _url_cs [] PROGMEM = "cs";
-prog_char _url_jn [] PROGMEM = "jn";
-
-prog_char _url_jl [] PROGMEM = "jl";
-prog_char _url_dl [] PROGMEM = "dl";
-
-prog_char _url_su [] PROGMEM = "su";
-prog_char _url_cu [] PROGMEM = "cu";
-
-prog_char _url_ja [] PROGMEM = "ja";
+/* Server function urls
+ * To save RAM space, each GET command keyword is exactly
+ * 2 characters long, with no ending 0
+ * The order must exactly match the order of the
+ * handler functions below
+ */
+const char _url_keys[] PROGMEM =
+  "cv"
+  "jc"
+  "dp"
+  "cp"
+  "cr"
+  "mp"
+  "up"
+  "jp"
+  "co"
+  "jo"
+  "sp"
+  "js"
+  "cm"
+  "cs"
+  "jn"
+  "je"
+  "jl"
+  "dl"
+  "su"
+  "cu"
+  "ja";
 
 // Server function handlers
-URLStruct urls[] = {
-  {_url_cv,server_change_values},
-  {_url_jc,server_json_controller},
-
-  {_url_dp,server_delete_program},
-  {_url_cp,server_change_program},
-  {_url_cr,server_change_runonce},
-  {_url_up,server_moveup_program},
-  {_url_jp,server_json_programs},
-
-
-  {_url_co,server_change_options},
-  {_url_jo,server_json_options},
-  {_url_sp,server_change_password},
-
-  {_url_js,server_json_status},
-  {_url_cm,server_change_manual},
-
-  {_url_cs,server_change_stations},
-  {_url_jn,server_json_stations},
-
-  {_url_jl,server_json_log},
-  {_url_dl,server_delete_log},
-
-  {_url_su,server_view_scripturl},
-  {_url_cu,server_change_scripturl},
-
-  {_url_ja,server_json_all},
-
+URLHandler urls[] = {
+  server_change_values,   // cv
+  server_json_controller, // jc
+  server_delete_program,  // dp
+  server_change_program,  // cp
+  server_change_runonce,  // cr
+  server_manual_program,  // mp  
+  server_moveup_program,  // up
+  server_json_programs,   // jp
+  server_change_options,  // co
+  server_json_options,    // jo
+  server_change_password, // sp
+  server_json_status,     // js
+  server_change_manual,   // cm
+  server_change_stations, // cs
+  server_json_stations,   // jn
+  server_json_station_special,// je
+  server_json_log,        // jl
+  server_delete_log,      // dl
+  server_view_scripturl,  // su
+  server_change_scripturl,// cu
+  server_json_all         // ja
 };
 
 // handle Ethernet request
